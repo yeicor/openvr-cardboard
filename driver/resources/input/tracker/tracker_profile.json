@@ -1,0 +1,25 @@
+{
+  "jsonid": "input_profile",
+  "controller_type": "openvrcardboard_tracker",
+  "input_bindingui_mode": "single_device",
+  "input_bindingui_right": {
+    "image": "{openvrcardboard}/icons/tracker.svg"
+  },
+  "priority": 6,
+  "tracker_types": {
+    "TrackerRole_Handed": "{openvrcardboard}/input/tracker/role_handed.json",
+    "TrackerRole_LeftFoot": "{openvrcardboard}/input/tracker/role_left_foot.json",
+    "TrackerRole_RightFoot": "{openvrcardboard}/input/tracker/role_right_foot.json",
+    "TrackerRole_LeftShoulder": "{openvrcardboard}/input/tracker/role_left_shoulder.json",
+    "TrackerRole_RightShoulder": "{openvrcardboard}/input/tracker/role_right_shoulder.json",
+    "TrackerRole_Waist": "{openvrcardboard}/input/tracker/role_waist.json",
+    "TrackerRole_Chest": "{openvrcardboard}/input/tracker/role_chest.json"
+  },
+  "input_source": {
+    "/pose/raw": {
+      "type": "pose",
+      "binding_image_point": [100, 90]
+    }
+  },
+  "default_bindings": []
+}

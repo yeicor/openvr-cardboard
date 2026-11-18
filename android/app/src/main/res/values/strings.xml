@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OpenVR Cardboard Phone</string>
+    <string name="host_hint">Desktop IP (e.g. 192.168.1.10)</string>
+    <string name="token_hint">Pairing token (optional)</string>
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
+    <string name="settings">Connection</string>
+    <string name="help">Start the desktop app first, then enter its LAN address. The phone streams IMU at sensor rate and displays the JPEG stereo view.</string>
+</resources>

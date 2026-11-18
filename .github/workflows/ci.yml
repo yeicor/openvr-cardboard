@@ -1,0 +1,549 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  openxr-runtime:
+    name: OpenXR runtime
+    # Keep this on the same Ubuntu release as docker/desktop.Dockerfile. The
+    # runtime is built here and executed inside the desktop and emulator test
+    # environments, so their glibc and shared-library SONAMEs must match.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache OpenXR build
+        uses: actions/cache@v4
+        with:
+          path: out/openxr
+          key: ${{ runner.os }}-24.04-openxr-${{ hashFiles('scripts/build-openxr.sh', 'shim/openxr_capture_shim.c') }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ca-certificates build-essential cmake ninja-build pkg-config git \
+            libeigen3-dev libvulkan-dev vulkan-tools glslang-tools \
+            libgl1-mesa-dev libglu1-mesa-dev libx11-dev libx11-xcb-dev \
+            libxrandr-dev libxinerama-dev \
+            libxcb1-dev libxcb-randr0-dev libxcb-xfixes0-dev \
+            libxcb-xinerama0-dev libxcb-present-dev libxcb-sync-dev \
+            libxcb-dri3-dev libxcb-glx0-dev libudev-dev libusb-1.0-0-dev \
+            zlib1g-dev libbsd-dev libsdl2-dev libjpeg-dev libpng-dev
+
+      - name: Build Monado, OpenXR loader, example and capture shim
+        run: scripts/build-openxr.sh --jobs 4
+
+      - name: Package runtime
+        run: |
+          mkdir -p openxr-dist
+          tar -C out/openxr -czf openxr-dist/openxr-runtime.tar.gz \
+            bin lib share include
+          du -sh openxr-dist/openxr-runtime.tar.gz
+
+      - name: Upload OpenXR runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: openxr-runtime
+          path: openxr-dist/openxr-runtime.tar.gz
+          if-no-files-found: error
+
+  driver-linux:
+    name: Driver (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake -S driver -B driver/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build driver/build -j2
+
+      - name: Test
+        run: ctest --test-dir driver/build --output-on-failure
+
+      - name: Upload driver
+        uses: actions/upload-artifact@v4
+        with:
+          name: driver-linux-x64
+          path: driver/build/openvrcardboard
+          if-no-files-found: error
+
+  driver-windows:
+    name: Driver (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S driver -B driver/build -A x64
+
+      - name: Build
+        run: cmake --build driver/build --config Release --parallel 2
+
+      - name: Test
+        run: ctest --test-dir driver/build -C Release --output-on-failure
+
+      - name: Upload driver
+        uses: actions/upload-artifact@v4
+        with:
+          name: driver-windows-x64
+          path: driver/build/openvrcardboard
+          if-no-files-found: error
+
+  desktop:
+    name: Desktop tests
+    needs: openxr-runtime
+    # docker/desktop.Dockerfile is Ubuntu 24.04, matching the runtime build.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download OpenXR runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: openxr-runtime
+          path: openxr-runtime
+
+      - name: Install OpenXR runtime
+        run: |
+          mkdir -p out/openxr
+          tar -C out/openxr -xzf openxr-runtime/openxr-runtime.tar.gz
+
+      - name: Run container test suite
+        run: |
+          scripts/run-e2e.sh desktop \
+            -o addopts= -q -p no:cacheprovider \
+            --junitxml=/workspace/artifacts/desktop/junit.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-test-results
+          path: artifacts/desktop
+          if-no-files-found: warn
+
+  desktop-windows:
+    name: Desktop tests (Windows)
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+      OPENVRCARDBOARD_DISABLE_GPU: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: desktop/pyproject.toml
+
+      - name: Install application dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "desktop[all]" pytest
+
+      - name: Run the desktop test suite
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts\desktop-windows | Out-Null
+          python -m pytest desktop/tests -o addopts= -q -p no:cacheprovider `
+            --junitxml=artifacts\desktop-windows\junit.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-test-results
+          path: artifacts/desktop-windows
+          if-no-files-found: warn
+
+  android:
+    name: Android tests and APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run JVM tests and build APK
+        run: scripts/run-e2e.sh android testDebugUnitTest assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-results
+          path: |
+            android/app/build/test-results/testDebugUnitTest
+            android/app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: warn
+
+  emulator-e2e:
+    name: Android emulator OpenXR video E2E
+    needs:
+      - android
+      - openxr-runtime
+    # The runtime binary from the build job runs directly on this host, so use
+    # the same Ubuntu release as the build job and the desktop container.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-debug-apk
+          path: android/app/build/outputs/apk/debug
+
+      - name: Download OpenXR runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: openxr-runtime
+          path: openxr-runtime
+
+      - name: Install OpenXR runtime
+        run: |
+          mkdir -p out/openxr
+          tar -C out/openxr -xzf openxr-runtime/openxr-runtime.tar.gz
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: desktop/pyproject.toml
+
+      - name: Install desktop app
+        run: python -m pip install -e 'desktop[all]' pytest
+
+      - name: Install recording, display and OpenXR runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ffmpeg xvfb x11-utils xdotool fonts-dejavu-core \
+            libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1 libopengl0 \
+            libgles2 libegl-mesa0 libgl1-mesa-dri libglx-mesa0 libglx0 libglu1-mesa libdbus-1-3 libfontconfig1 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-sync1 libxcb-xfixes0 \
+            libxcb-xkb1 libxrandr2 libsdl2-2.0-0 libvulkan1 mesa-vulkan-drivers \
+            libx11-6 libx11-xcb1 libxcb1 libxcb-glx0 libxcb-present0 \
+            libxcb-dri3-0 libxcb-shm0 libudev1 libusb-1.0-0 libbsd0 \
+            libjpeg-turbo8 libpng16-16 libsamplerate0 libpulse0 libasound2t64
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run recorded emulator E2E
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: >-
+            -no-window -no-audio -no-boot-anim -no-snapshot
+            -gpu swiftshader_indirect -camera-back none -camera-front none
+          # android-emulator-runner executes each line of `script` as its own
+          # shell command, so keep this invocation on a single line.
+          script: |
+            mkdir -p artifacts/emulator-e2e
+            OVRC_EMULATOR_E2E=1 OVRC_EMULATOR_ATTACH=1 OVRC_OPENXR_ROOT="$GITHUB_WORKSPACE/out/openxr" python -m pytest desktop/tests/test_emulator_e2e.py -o addopts= -p no:cacheprovider -q -s --junitxml=artifacts/emulator-e2e/junit.xml
+
+      - name: Upload recordings, screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-e2e-video
+          path: artifacts/emulator-e2e
+          if-no-files-found: warn
+          retention-days: 30
+
+  desktop-package:
+    name: Desktop package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build wheel and source distribution
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --outdir dist desktop
+
+      - name: Smoke-test the wheel
+        run: |
+          python -m venv /tmp/ovrc-wheel
+          /tmp/ovrc-wheel/bin/python -m pip install dist/*.whl
+          /tmp/ovrc-wheel/bin/openvrcardboard --version
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-package
+          path: dist
+          if-no-files-found: error
+
+  package-linux:
+    name: Portable package (Linux)
+    needs:
+      - driver-linux
+      - openxr-runtime
+    # The bundled Monado runtime is built on Ubuntu 24.04. Keep the packaging
+    # runner on the same release so the frozen app and the runtime agree on
+    # their shared-library SONAMEs.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: desktop/pyproject.toml
+
+      - name: Install Qt and OpenCV runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1 libopengl0 libegl1 libglib2.0-0 libdbus-1-3 \
+            libgles2 libegl-mesa0 libgl1-mesa-dri \
+            libgssapi-krb5-2 libfontconfig1 libfreetype6 libx11-6 libx11-xcb1 libxcb1 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-shm0 libxcb-sync1 libxcb-util1 libxcb-xfixes0 \
+            libxcb-xkb1 libxext6 libxrender1 libxtst6 libsm6 libice6 \
+            libxkbcommon0 libxkbcommon-x11-0 libxrandr2 libxfixes3 libxi6 \
+            libxcursor1 libxss1 libsdl2-2.0-0 libjpeg-turbo8 libpng16-16 \
+            libsamplerate0 libasound2t64 libpulse0 libudev1 libusb-1.0-0 \
+            libbsd0 file
+
+      - name: Download driver
+        uses: actions/download-artifact@v4
+        with:
+          name: driver-linux-x64
+          path: package-driver
+
+      - name: Download OpenXR runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: openxr-runtime
+          path: openxr-runtime
+
+      - name: Install OpenXR runtime
+        run: |
+          mkdir -p out/openxr
+          tar -C out/openxr -xzf openxr-runtime/openxr-runtime.tar.gz
+
+      - name: Install application dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e 'desktop[all]' pyinstaller
+
+      - name: Fetch appimagetool
+        run: |
+          # Keep the .AppImage suffix: package.py then runs the tool with
+          # --appimage-extract-and-run, which works without FUSE.
+          if curl -fsSL --retry 3 \
+            -o /tmp/appimagetool-x86_64.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          then
+            chmod +x /tmp/appimagetool-x86_64.AppImage
+            echo "APPIMAGETOOL=/tmp/appimagetool-x86_64.AppImage" >> "$GITHUB_ENV"
+          else
+            echo "appimagetool download failed; only the tar.gz will be built"
+          fi
+
+      - name: Build portable package
+        run: |
+          python scripts/package.py \
+            --out dist \
+            --driver package-driver \
+            --openxr out/openxr \
+            --no-build-driver \
+            --archive tar \
+            --appimage
+
+      - name: Smoke-test the frozen application
+        run: |
+          dist/openvrcardboard/openvrcardboard --version
+          dist/openvrcardboard/openvrcardboard --self-test
+          dist/openvrcardboard/openvrcardboard-install status \
+            --state /tmp/openvrcardboard-state.json
+          test -f dist/openvrcardboard/driver/driver.vrdrivermanifest
+          test -x dist/openvrcardboard/openvrcardboard-openxr
+          test -x dist/openvrcardboard/openvrcardboard-demo
+          test -x dist/openvrcardboard/openxr/bin/openxr-example
+
+      - name: Upload portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-linux
+          path: |
+            dist/openvrcardboard.tar.gz
+            dist/*.AppImage
+          if-no-files-found: error
+
+  package-windows:
+    name: Windows installer
+    needs:
+      - driver-windows
+      - desktop-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: desktop/pyproject.toml
+
+      - name: Download driver
+        uses: actions/download-artifact@v4
+        with:
+          name: driver-windows-x64
+          path: package-driver
+
+      - name: Install application dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "desktop[all]" pyinstaller
+
+      - name: Build portable package
+        run: |
+          python scripts/package.py `
+            --out dist `
+            --driver package-driver `
+            --skip-openxr `
+            --no-build-driver `
+            --archive zip
+
+      - name: Smoke-test the frozen application
+        shell: pwsh
+        run: |
+          dist/openvrcardboard/openvrcardboard.exe --version
+          dist/openvrcardboard/openvrcardboard.exe --self-test
+          dist/openvrcardboard/openvrcardboard-install.exe status `
+            --state "$env:TEMP\openvrcardboard-state.json"
+          if (-not (Test-Path dist/openvrcardboard/driver/driver.vrdrivermanifest)) {
+            throw "the portable package is missing the driver manifest"
+          }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build the setup executable
+        shell: pwsh
+        run: scripts\build_windows_installer.ps1 -SourceDir dist\openvrcardboard
+
+      - name: Verify the installer
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\OpenVR-Cardboard-*-Setup.exe
+          if (-not $setup) { throw "the Inno Setup installer was not produced" }
+          if ($setup.Length -lt 50MB) { throw "the installer is unexpectedly small" }
+          Write-Host "Installer: $($setup.FullName) ($([math]::Round($setup.Length / 1MB, 1)) MB)"
+
+      - name: Upload the Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-windows
+          path: |
+            dist/openvrcardboard.zip
+            dist/OpenVR-Cardboard-*-Setup.exe
+          if-no-files-found: error
+
+  demo-windows:
+    name: OpenXR demo (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg\installed
+          key: ${{ runner.os }}-vcpkg-openxr-demo-${{ hashFiles('scripts/build_demo_windows.ps1') }}
+
+      - name: Build openxr-simple-example
+        shell: pwsh
+        run: scripts\build_demo_windows.ps1
+
+      - name: Upload demo
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-windows
+          path: out/openxr-simple-example-windows-x64.zip
+          if-no-files-found: error
+
+  build-artifacts:
+    name: Build artifacts
+    # Keep one consolidated, release-like bundle on main and manual runs.
+    # Pull requests already expose every job's artifacts individually.
+    if: github.event_name != 'pull_request'
+    needs:
+      - driver-linux
+      - driver-windows
+      - desktop
+      - desktop-windows
+      - android
+      - emulator-e2e
+      - desktop-package
+      - package-linux
+      - package-windows
+      - demo-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: build-assets
+
+      - name: Remove empty files
+        run: find build-assets -type f -empty -delete
+
+      - name: Upload consolidated build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openvrcardboard-build-${{ github.sha }}
+          path: build-assets
+          if-no-files-found: error
+          retention-days: 30

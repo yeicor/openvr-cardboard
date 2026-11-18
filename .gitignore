@@ -1,0 +1,52 @@
+# Build output
+build/
+driver/build/
+out/
+dist/
+packaging/build/
+packaging/dist/
+*.AppImage
+*.egg-info/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Android
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+android/captures/
+*.apk
+*.aab
+*.keystore
+!android/app/debug.keystore
+
+# E2E and CI artifacts
+artifacts/
+e2e-artifacts/
+openxr-dist/
+release-assets/
+release-upload/
+*.mp4
+*.webm
+*.junit.xml
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Runtime output
+logs/
+recordings/
+*.log
+config.local.json

@@ -1,0 +1,53 @@
+{
+  "jsonid": "input_profile",
+  "controller_type": "vive_controller",
+  "legacy_profile": "vive_controller",
+  "legacy_binding": "{openvrcardboard}/input/legacy_bindings_controller.json",
+  "input_bindingui_mode": "controller_handed",
+  "input_bindingui_left": {
+    "transform": "scale(-1,1)",
+    "image": "{openvrcardboard}/icons/controller.svg"
+  },
+  "input_bindingui_right": {
+    "image": "{openvrcardboard}/icons/controller.svg"
+  },
+  "input_source": {
+    "/input/trigger": {
+      "type": "trigger",
+      "click": true,
+      "value": true,
+      "binding_image_point": [41, 64],
+      "order": 1
+    },
+    "/input/trackpad": {
+      "type": "trackpad",
+      "click": true,
+      "touch": true,
+      "binding_image_point": [66, 59],
+      "order": 2
+    },
+    "/input/grip": {
+      "type": "button",
+      "click": true,
+      "binding_image_point": [52, 87],
+      "order": 3
+    },
+    "/input/application_menu": {
+      "type": "button",
+      "click": true,
+      "binding_image_point": [64, 35],
+      "order": 4
+    },
+    "/input/system": {
+      "type": "button",
+      "click": true,
+      "binding_image_point": [67, 81],
+      "order": 5
+    },
+    "/output/haptic": {
+      "type": "vibration",
+      "binding_image_point": [66, 59]
+    }
+  },
+  "default_bindings": []
+}

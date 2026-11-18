@@ -1,0 +1,20 @@
+{
+  "jsonid": "input_profile",
+  "controller_type": "openvrcardboard_tracker_handed",
+  "device_class": "TrackedDeviceClass_GenericTracker",
+  "driver_name": "openvrcardboard",
+  "input_bindingui_mode": "single_device",
+  "input_bindingui_right": {
+    "image": "{openvrcardboard}/icons/tracker.svg"
+  },
+  "input_source": {
+    "/pose/raw": {
+      "type": "pose",
+      "binding_image_point": [
+        100,
+        90
+      ]
+    }
+  },
+  "default_bindings": []
+}

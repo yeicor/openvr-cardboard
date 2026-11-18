@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openvrcardboard"
+version = "1.1.0"
+description = "Webcam tracking, gamepad VR controllers and phone HMD streaming for SteamVR"
+readme = { text = "Webcam tracking, gamepad controllers and phone HMD streaming for OpenVR. See the repository README for setup.", content-type = "text/markdown" }
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "OpenVR Cardboard contributors" }]
+keywords = ["steamvr", "openvr", "vr", "tracking", "webcam", "aruco", "mediapipe"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Games/Entertainment",
+    "Topic :: Multimedia :: Video :: Capture",
+]
+dependencies = [
+    "numpy>=2.0",
+    "Pillow>=11.0",
+    "websockets>=15.0",
+]
+
+[project.optional-dependencies]
+ui = ["PySide6>=6.10"]
+tracking = [
+    # ArUcoDetector and solvePnPRefineLM need OpenCV 4.7; the app is developed
+    # and tested against OpenCV 5, whose ArUco detector is noticeably faster.
+    "opencv-contrib-python>=5.0",
+    # The Tasks API ships its models as .task files and no longer depends on
+    # the removed mediapipe.solutions namespace.
+    "mediapipe>=1.2.3",
+]
+gamepad = ["pygame-ce>=2.5.8"]
+screen = ["mss>=10.0"]
+video = ["imageio-ffmpeg>=0.6"]
+all = [
+    "PySide6>=6.10",
+    "opencv-contrib-python>=5.0",
+    "mediapipe>=1.2.3",
+    "pygame-ce>=2.5.8",
+    "mss>=10.0",
+    "imageio-ffmpeg>=0.6",
+]
+
+[project.scripts]
+openvrcardboard = "openvrcardboard.app:main"
+openvrcardboard-install = "openvrcardboard.installer:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["openvrcardboard*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["e2e: container end-to-end tests that use real sockets"]
