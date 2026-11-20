@@ -1,5 +1,10 @@
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "protocol.h"
@@ -7,6 +12,28 @@
 using namespace ovrc;
 
 namespace {
+
+std::unordered_map<std::string, std::vector<uint8_t>> LoadGoldenVectors()
+{
+	std::unordered_map<std::string, std::vector<uint8_t>> vectors;
+	std::ifstream file( OVRC_GOLDEN_VECTORS );
+	std::string line;
+	while ( std::getline( file, line ) ) {
+		if ( line.empty() || line[ 0 ] == '#' )
+			continue;
+		std::istringstream stream( line );
+		std::string name;
+		std::string hex;
+		if ( !( stream >> name >> hex ) || hex.size() % 2 != 0 )
+			continue;
+		std::vector<uint8_t> bytes;
+		bytes.reserve( hex.size() / 2 );
+		for ( std::size_t i = 0; i < hex.size(); i += 2 )
+			bytes.push_back( static_cast<uint8_t>( std::stoul( hex.substr( i, 2 ), nullptr, 16 ) ) );
+		vectors.emplace( std::move( name ), std::move( bytes ) );
+	}
+	return vectors;
+}
 
 std::vector<uint8_t> BuildStatePacket()
 {
@@ -42,6 +69,8 @@ std::vector<uint8_t> BuildStatePacket()
 	left.id = 1;
 	left.flags = proto::PoseValid | proto::Connected;
 	left.position[ 0 ] = -0.3f;
+	left.position[ 1 ] = 1.2f;
+	left.position[ 2 ] = -0.4f;
 	left.rotation[ 3 ] = 1.0f;
 	append( &left, sizeof( left ) );
 
@@ -54,6 +83,7 @@ std::vector<uint8_t> BuildStatePacket()
 	input.trigger = 0.75f;
 	input.grip = 0.25f;
 	input.joystickX = -0.5f;
+	input.joystickY = 0.5f;
 	append( &input, sizeof( input ) );
 	return bytes;
 }
@@ -117,6 +147,63 @@ int main()
 	const auto status = proto::MakeStatus( 8, 5, 1000, 321, 0 );
 	CHECK( status.deviceCount == 5 );
 	CHECK( status.statePackets == 321 );
+
+	const auto golden = LoadGoldenVectors();
+	auto goldenBytes = [ & ]( const char *name ) -> const std::vector<uint8_t> * {
+		const auto it = golden.find( name );
+		return it == golden.end() ? nullptr : &it->second;
+	};
+	const auto *goldenState = goldenBytes( "state" );
+	const auto *goldenHaptic = goldenBytes( "haptic" );
+	const auto *goldenStatus = goldenBytes( "status" );
+	const auto *goldenImu = goldenBytes( "imu" );
+	const auto *goldenImuAuth = goldenBytes( "imu_auth" );
+	const auto *goldenPing = goldenBytes( "time_ping" );
+	const auto *goldenPingAuth = goldenBytes( "time_ping_auth" );
+	CHECK( goldenState != nullptr );
+	CHECK( goldenHaptic != nullptr );
+	CHECK( goldenStatus != nullptr );
+	CHECK( goldenImu != nullptr );
+	CHECK( goldenImuAuth != nullptr );
+	CHECK( goldenPing != nullptr );
+	CHECK( goldenPingAuth != nullptr );
+
+	// C++ must produce exactly the same bytes as the Python and Kotlin
+	// encoders, not merely parse its own layout.
+	if ( goldenState != nullptr )
+		CHECK( bytes == *goldenState );
+	if ( goldenHaptic != nullptr ) {
+		CHECK( goldenHaptic->size() == sizeof( proto::Haptic ) );
+		CHECK( std::memcmp( &haptic, goldenHaptic->data(), sizeof( proto::Haptic ) ) == 0 );
+	}
+	if ( goldenStatus != nullptr ) {
+		const auto goldenStatusPacket = proto::MakeStatus( 8, 5, 1000, 321, 2 );
+		CHECK( goldenStatus->size() == sizeof( proto::Status ) );
+		CHECK( std::memcmp( &goldenStatusPacket, goldenStatus->data(), sizeof( proto::Status ) ) == 0 );
+	}
+	if ( goldenImu != nullptr ) {
+		proto::Imu imu{};
+		CHECK( proto::ParseImu( goldenImu->data(), goldenImu->size(), imu ) );
+		CHECK( std::fabs( imu.timestamp - 1234.5 ) < 1e-9 );
+		CHECK( std::fabs( imu.quaternion[ 3 ] - 0.9f ) < 1e-6f );
+	}
+	if ( goldenImuAuth != nullptr ) {
+		proto::Imu imu{};
+		// The driver ignores the optional 16-byte authenticator on packets it
+		// does not consume; accepting the longer form keeps the vector shared.
+		CHECK( goldenImuAuth->size() == sizeof( proto::Imu ) + 16 );
+		CHECK( proto::ParseImu( goldenImuAuth->data(), goldenImuAuth->size(), imu ) );
+	}
+	if ( goldenPing != nullptr ) {
+		proto::TimePing ping{};
+		CHECK( proto::ParseTimePing( goldenPing->data(), goldenPing->size(), ping ) );
+		CHECK( std::fabs( ping.clientTime - 55.125 ) < 1e-9 );
+	}
+	if ( goldenPingAuth != nullptr ) {
+		proto::TimePing ping{};
+		CHECK( goldenPingAuth->size() == sizeof( proto::TimePing ) + 16 );
+		CHECK( proto::ParseTimePing( goldenPingAuth->data(), goldenPingAuth->size(), ping ) );
+	}
 
 	if ( failures != 0 ) {
 		std::fprintf( stderr, "%d protocol self-test failure(s)\n", failures );

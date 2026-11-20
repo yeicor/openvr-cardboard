@@ -221,27 +221,20 @@ class CameraCapture:
         attempts = [requested]
         if self.config.allow_mode_fallback and self.config.verify_mode:
             # A mode the camera driver refuses must not silently leave the
-            # app decoding 720p at 5 FPS. Try a few common UVC modes, keeping
-            # MJPG first because it is the only way most cameras reach 60 FPS.
-            for candidate in (
-                (requested[0], 1920, 1080, 60),
-                (requested[0], 1280, 720, 60),
-                (requested[0], 1280, 720, 30),
-                ("", 1280, 720, 30),
-                ("", 640, 480, 30),
-            ):
-                if candidate not in attempts:
-                    attempts.append(candidate)
+            # app decoding 720p at 5 FPS. Prefer a lower resolution at the
+            # requested frame rate, then the same resolution at a lower rate:
+            # 1080p60, 720p60, 1080p30, 720p30, ...  A camera whose 1080p60
+            # request negotiates 1080p30 is therefore retried at 1080p30
+            # instead of settling for 720p30.
+            attempts.extend(self._fallback_attempts(requested))
 
         capture = None
-        last_mode = (0, 0, 0.0, 0)
         for fourcc, width, height, fps in attempts:
             candidate = self._open_capture(cv2, backend_id, fourcc, width, height, fps)
             if candidate is None:
                 continue
             mode = self._capture_mode(cv2, candidate)
             capture = candidate
-            last_mode = mode
             if not self.config.verify_mode or self._mode_matches(
                 mode, (width, height, fps)
             ):
@@ -364,6 +357,58 @@ class CameraCapture:
         if hasattr(cv2, "CAP_PROP_FOURCC"):
             fourcc = _fourcc_text(cv2, int(get(cv2.CAP_PROP_FOURCC, 0) or 0))
         return width, height, fps, fourcc
+
+    @staticmethod
+    def _fallback_attempts(
+        requested: tuple[str, int, int, int],
+    ) -> list[tuple[str, int, int, int]]:
+        """Return UVC fallback modes in least-surprising order.
+
+        Resolution is capped at the requested size so a 720p request never
+        silently opens 1080p.  Frame rates are capped too: a camera asked for
+        30 FPS is not retried at 60 FPS.
+        """
+        fourcc, width, height, fps = requested
+        if width <= 0 or height <= 0:
+            return []
+        # Keep the 1080p/720p ladder interleaved by frame rate:
+        # 1080p60, 720p60, 1080p30, 720p30. 640x480 follows the ladder so a
+        # camera is not dropped to 640p before its 1080p30 mode is tried.
+        sizes = [(int(width), int(height))]
+        for candidate in ((1920, 1080), (1280, 720)):
+            if candidate[0] <= width and candidate[1] <= height:
+                if candidate not in sizes:
+                    sizes.append(candidate)
+        fps_order = [int(fps)] if fps > 0 else [60, 30]
+        for candidate in (60, 30):
+            if candidate < fps_order[0] and candidate not in fps_order:
+                fps_order.append(candidate)
+        attempts: list[tuple[str, int, int, int]] = []
+        for frame_rate in fps_order:
+            for candidate_width, candidate_height in sizes:
+                attempt = (
+                    str(fourcc or ""),
+                    candidate_width,
+                    candidate_height,
+                    frame_rate,
+                )
+                if attempt != requested and attempt not in attempts:
+                    attempts.append(attempt)
+        for frame_rate in fps_order:
+            attempt = (str(fourcc or ""), 640, 480, frame_rate)
+            if attempt != requested and attempt not in attempts:
+                attempts.append(attempt)
+        # Some UVC cameras expose a mode only with the backend's default
+        # pixel format. Keep two modest fallbacks at the very end, but never
+        # exceed the requested size or frame rate.
+        for attempt in (("", 1280, 720, 30), ("", 640, 480, 30)):
+            if attempt[1] > width or attempt[2] > height:
+                continue
+            if fps > 0 and attempt[3] > fps:
+                continue
+            if attempt not in attempts and attempt != requested:
+                attempts.append(attempt)
+        return attempts
 
     @staticmethod
     def _mode_matches(actual: tuple[int, int, float, str], requested: tuple[int, int, int]) -> bool:

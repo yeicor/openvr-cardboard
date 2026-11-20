@@ -1,0 +1,32 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+      - id: check-merge-conflict
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+        # Keep vendored upstream headers byte-for-byte as shipped.
+        exclude: ^driver/third_party/
+      - id: trailing-whitespace
+        exclude: ^driver/third_party/
+
+  - repo: local
+    hooks:
+      # Run the locked tools from desktop/ so Ruff's import classification
+      # and mypy's configured file list resolve exactly as they do in CI.
+      - id: ruff
+        name: ruff (desktop)
+        entry: uv run --directory desktop --locked ruff check --fix
+        language: system
+        files: ^desktop/.*\.py$
+        pass_filenames: false
+      - id: mypy
+        name: mypy (typed core modules)
+        entry: uv run --directory desktop --locked mypy
+        language: system
+        files: ^desktop/
+        pass_filenames: false

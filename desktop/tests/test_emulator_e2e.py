@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_android_emulator_streams_the_openxr_application():
-    from openvrcardboard.emulator_e2e import E2EConfig, EmulatorE2E
+    from e2e.emulator import E2EConfig, EmulatorE2E
 
     artifacts = Path(os.environ.get("OVRC_E2E_ARTIFACTS", "artifacts/emulator-e2e"))
     minimum_frames = int(os.environ.get("OVRC_E2E_MIN_FRAMES", "60"))

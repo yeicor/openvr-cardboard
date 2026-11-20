@@ -551,7 +551,10 @@ class GamepadManager:
         next_time = time.monotonic()
         while not self._stop.is_set():
             now = time.monotonic()
-            if now - self._last_scan > self.hotplug_interval_s or not self._pads:
+            # Hotplug scans are rate-limited even when no pad is connected.
+            # Re-initialising SDL's joystick subsystem on every poll iteration
+            # burned a full CPU core and starved the Qt event loop.
+            if now - self._last_scan >= self.hotplug_interval_s:
                 self._last_scan = now
                 try:
                     self._scan()

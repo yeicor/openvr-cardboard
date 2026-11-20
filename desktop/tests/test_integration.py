@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 from openvrcardboard.integration import (
-    IntegrationError,
     InstallState,
+    IntegrationError,
     install,
     library_name,
     platform_dir,

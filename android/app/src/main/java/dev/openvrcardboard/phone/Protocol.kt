@@ -26,6 +26,7 @@ object Protocol {
     const val IMU_SIZE = 64
     const val TIME_PING_SIZE = 20
     const val TIME_PONG_SIZE = 28
+    const val AUTH_SIZE = 16
 
     const val LAYOUT_MONO = 0
     const val LAYOUT_SBS = 1
@@ -64,6 +65,17 @@ object Protocol {
         buffer.putInt(sequence)
     }
 
+    /**
+     * First 16 bytes of SHA-256(token), or an empty array without a token.
+     * This tag authenticates IMU and TIME_PING packets without putting the
+     * pairing token itself on the wire.
+     */
+    fun authTag(token: String): ByteArray {
+        if (token.isBlank()) return ByteArray(0)
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        return digest.digest(token.toByteArray(Charsets.UTF_8)).copyOf(AUTH_SIZE)
+    }
+
     fun imuPacket(
         sequence: Int,
         timestamp: Double,
@@ -72,8 +84,9 @@ object Protocol {
         acceleration: FloatArray,
         accuracy: Int,
         screenRotation: Int,
+        authTag: ByteArray = ByteArray(0),
     ): ByteArray {
-        val buffer = ByteBuffer.allocate(IMU_SIZE).order(ByteOrder.LITTLE_ENDIAN)
+        val buffer = ByteBuffer.allocate(IMU_SIZE + authTag.size).order(ByteOrder.LITTLE_ENDIAN)
         writeHeader(buffer, TYPE_IMU, sequence)
         buffer.putDouble(timestamp)
         for (value in quaternion) buffer.putFloat(value)
@@ -84,6 +97,7 @@ object Protocol {
         buffer.put(0)
         buffer.put(0)
         buffer.put(0)
+        buffer.put(authTag)
         return buffer.array()
     }
 
@@ -96,6 +110,7 @@ object Protocol {
         acceleration: FloatArray,
         accuracy: Int,
         screenRotation: Int,
+        authTag: ByteArray = ByteArray(0),
     ) {
         buffer.clear()
         writeHeader(buffer, TYPE_IMU, sequence)
@@ -108,12 +123,19 @@ object Protocol {
         buffer.put(0)
         buffer.put(0)
         buffer.put(0)
+        buffer.put(authTag)
     }
 
-    fun timePingPacket(sequence: Int, clientTime: Double): ByteArray {
-        val buffer = ByteBuffer.allocate(TIME_PING_SIZE).order(ByteOrder.LITTLE_ENDIAN)
+    fun timePingPacket(
+        sequence: Int,
+        clientTime: Double,
+        authTag: ByteArray = ByteArray(0),
+    ): ByteArray {
+        val buffer = ByteBuffer.allocate(TIME_PING_SIZE + authTag.size)
+            .order(ByteOrder.LITTLE_ENDIAN)
         writeHeader(buffer, TYPE_TIME_PING, sequence)
         buffer.putDouble(clientTime)
+        buffer.put(authTag)
         return buffer.array()
     }
 

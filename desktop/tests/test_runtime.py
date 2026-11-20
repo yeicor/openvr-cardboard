@@ -1,5 +1,5 @@
-from pathlib import Path
 import socket
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -9,7 +9,6 @@ from openvrcardboard.config import AppConfig, load_config, save_config
 from openvrcardboard.markers import MarkerDetection
 from openvrcardboard.mathutil import IDENTITY
 from openvrcardboard.phone_link import PhoneImuReceiver
-from openvrcardboard.protocol import DeviceId
 from openvrcardboard.runtime import Runtime, create_runtime
 from openvrcardboard.types import PhoneSample
 
@@ -48,8 +47,8 @@ def test_runtime_starts_and_stops_without_optional_dependencies():
     assert not runtime.phone.running
 
 
-def test_runtime_falls_back_to_estimated_camera_model():
-    runtime = Runtime(make_config())
+def test_runtime_falls_back_to_estimated_camera_model(tmp_path):
+    runtime = Runtime(make_config(), config_path=tmp_path / "config.json")
     try:
         assert runtime.model.width == 1920
         assert runtime.model.height == 1080

@@ -20,12 +20,47 @@ android {
         versionName = "1.1.0"
     }
 
+    // Release APKs must always be signed with the same key, otherwise Android
+    // refuses to install an update over the previous version. CI decodes the
+    // keystore from GitHub secrets into a temporary file and points
+    // OVRC_ANDROID_KEYSTORE at it; the keystore and passwords never enter the
+    // repository. A local release build without these variables is unsigned.
+    signingConfigs {
+        val keystorePath = System.getenv("OVRC_ANDROID_KEYSTORE")
+        val keystorePassword = System.getenv("OVRC_ANDROID_KEYSTORE_PASSWORD")
+        val keyAliasName = System.getenv("OVRC_ANDROID_KEY_ALIAS")
+        val keyPasswordValue = System.getenv("OVRC_ANDROID_KEY_PASSWORD")
+        if (
+            !keystorePath.isNullOrBlank() &&
+            !keystorePassword.isNullOrBlank() &&
+            !keyAliasName.isNullOrBlank() &&
+            !keyPasswordValue.isNullOrBlank()
+        ) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = keystorePassword
+                keyAlias = keyAliasName
+                keyPassword = keyPasswordValue
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfigs.findByName("release")?.let { signingConfig = it }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
+            )
+        }
+    }
+
+    testOptions {
+        unitTests.all {
+            it.systemProperty(
+                "ovrc.goldenVectors",
+                rootProject.file("../protocol/golden_vectors.txt").absolutePath,
             )
         }
     }

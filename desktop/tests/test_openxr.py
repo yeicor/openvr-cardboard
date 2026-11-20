@@ -1,5 +1,4 @@
 import io
-import json
 import socket
 import struct
 import sys

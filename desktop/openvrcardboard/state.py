@@ -13,9 +13,9 @@ from typing import Optional
 
 import numpy as np
 
+from .markers import MarkerDetection
 from .mathutil import clamp, normalize
 from .pose_tracking import BodyObservation, HandObservation
-from .markers import MarkerDetection
 from .protocol import Buttons, ControllerInput, DeviceId
 from .types import PhoneSample, Pose, RuntimeStatus, TrackingSnapshot
 

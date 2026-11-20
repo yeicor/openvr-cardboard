@@ -1,7 +1,6 @@
 import socket
 import threading
 
-import numpy as np
 import pytest
 
 from openvrcardboard.phone_link import PhoneImuReceiver
@@ -101,6 +100,46 @@ def test_receiver_reorders_network_packets_and_drops_stale_ones():
             valid_imu(4, timestamp=10.03), address, now=1.07
         ) is False
         assert receiver.stats().dropped_samples >= 1
+    finally:
+        receiver.stop()
+
+
+def test_receiver_requires_the_pairing_token_when_configured():
+    events = []
+    receiver = PhoneImuReceiver(port=0, token="correct horse", on_sample=events.append)
+    address = ("192.168.1.20", 5555)
+    try:
+        assert not receiver.handle_datagram(valid_imu(1, timestamp=1.0), address, now=1.0)
+        assert not receiver.handle_datagram(
+            valid_imu(2, timestamp=1.01, token="wrong"), address, now=1.01
+        )
+        assert receiver.handle_datagram(
+            valid_imu(3, timestamp=1.02, token="correct horse"), address, now=1.02
+        )
+        receiver.flush(2.0)
+        assert [sample.sequence for sample in events] == [3]
+        stats = receiver.stats()
+        assert stats.auth_failures == 2
+        assert stats.samples == 1
+    finally:
+        receiver.stop()
+
+
+def test_receiver_rejects_unauthenticated_time_pings():
+    receiver = PhoneImuReceiver(port=0, token="secret")
+    try:
+        assert not receiver.handle_datagram(
+            pack_time_ping(1, 10.0), ("10.0.0.2", 1000), now=1.0
+        )
+        assert not receiver.handle_datagram(
+            pack_time_ping(2, 10.0, token="wrong"), ("10.0.0.2", 1000), now=1.0
+        )
+        assert receiver.handle_datagram(
+            pack_time_ping(3, 10.0, token="secret"), ("10.0.0.2", 1000), now=1.0
+        ) is False  # pings are answered, not samples
+        stats = receiver.stats()
+        assert stats.pings == 1
+        assert stats.auth_failures == 2
     finally:
         receiver.stop()
 

@@ -1,0 +1,41 @@
+# Normalise text files across Linux, Windows and macOS checkouts.
+* text=auto eol=lf
+
+*.py text diff=python
+*.pyi text diff=python
+*.c text
+*.cc text
+*.cpp text
+*.h text
+*.hpp text
+*.kt text
+*.kts text
+*.gradle text
+*.md text
+*.json text
+*.yml text
+*.yaml text
+*.toml text
+*.xml text
+*.sh text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.jar binary
+*.stl binary
+*.3mf binary
+*.glb binary
+*.zip binary
+*.gz binary
+*.AppImage binary
+*.apk binary
+*.aab binary
+*.keystore binary

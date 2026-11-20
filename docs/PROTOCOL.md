@@ -204,7 +204,12 @@ uint8  tail                   1   accuracy (bits 0–1) | screen rotation (bits 
 uint8  reserved[3]            3
 ```
 
-Total: 64 bytes.
+Total: 64 bytes, or 80 bytes with a pairing token.
+
+When `phone.token` is set, the phone appends a 16-byte authenticator after
+the reserved bytes: the first 16 bytes of `SHA-256(token UTF-8)`. The desktop
+rejects IMU packets whose authenticator is missing or wrong. Without a token
+no authenticator is sent and the desktop accepts the 64-byte form.
 
 The quaternion describes the orientation of the phone in the Android world
 frame. The desktop app removes the orientation captured at the last recenter
@@ -231,7 +236,11 @@ display, not a fixed value. See `docs/ARCHITECTURE.md` for the recenter math.
 ```
 header              12
 double client_time   8    phone elapsedRealtimeNanos / 1e9
+auth[16]            16    only when phone.token is set
 ```
+
+The authenticator is the same `SHA-256(token)` prefix as for IMU packets. The
+desktop drops unauthenticated pings without replying when `phone.token` is set.
 
 ### TIME_PONG (`0x22`), desktop → phone
 

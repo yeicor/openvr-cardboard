@@ -16,7 +16,6 @@ from openvrcardboard.fusion import (
     android_quaternion_to_play,
     apply_local_offset,
     pose_is_fresh,
-    screen_rotation_quaternion,
 )
 from openvrcardboard.mathutil import (
     IDENTITY,
@@ -25,7 +24,6 @@ from openvrcardboard.mathutil import (
     from_euler_zyx_deg,
     multiply,
     normalize,
-    rotate,
     to_euler_zyx_deg,
 )
 from openvrcardboard.protocol import Buttons, ControllerInput, DeviceId

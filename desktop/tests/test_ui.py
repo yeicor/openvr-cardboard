@@ -1,5 +1,6 @@
 """Settings dialog wiring: every config section round-trips through the UI."""
 
+import copy
 import os
 
 import pytest
@@ -8,10 +9,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QTabWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialog, QTabWidget  # noqa: E402
 
 from openvrcardboard.config import AppConfig  # noqa: E402
-from openvrcardboard.ui.main_window import SettingsDialog  # noqa: E402
+from openvrcardboard.runtime import Runtime  # noqa: E402
+from openvrcardboard.ui.main_window import MainWindow, SettingsDialog  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -220,3 +222,98 @@ def test_settings_round_trips_stream_lens_and_openxr(app):
         assert cfg.openxr.ipd_m == pytest.approx(0.066)
     finally:
         dialog.close()
+
+
+def test_main_window_settings_apply_does_not_block_the_event_loop(app, monkeypatch):
+    import threading
+    import time
+    from pathlib import Path
+
+    from openvrcardboard.ui import main_window as main_window_module
+
+    runtime = Runtime(AppConfig())
+    applied = threading.Event()
+
+    def slow_apply(config):
+        time.sleep(0.4)
+        applied.set()
+        return ["calibration loaded"]
+
+    class AcceptedDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def result_config(self):
+            return copy.deepcopy(AppConfig())
+
+    monkeypatch.setattr(main_window_module, "SettingsDialog", AcceptedDialog)
+    monkeypatch.setattr(runtime, "apply_config", slow_apply)
+    monkeypatch.setattr(runtime, "save", lambda: Path("config.json"))
+
+    window = MainWindow(runtime, start_tracking=False)
+    window._initial_start = lambda: None
+    window.show()
+    try:
+        begin = time.monotonic()
+        window._open_settings()
+        assert time.monotonic() - begin < 0.3
+        assert window._busy
+        assert not applied.is_set()
+
+        deadline = time.monotonic() + 3.0
+        while (not applied.is_set() or window._busy) and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        assert applied.is_set()
+        assert not window._busy
+        assert "calibration loaded" in window.notes.toPlainText()
+    finally:
+        window.close()
+        app.processEvents()
+        runtime.stop()
+
+
+def test_main_window_start_does_not_block_the_event_loop(app, monkeypatch):
+    import threading
+    import time
+
+    runtime = Runtime(AppConfig())
+    started = threading.Event()
+
+    def slow_start(start_tracking=None):
+        time.sleep(0.4)
+        runtime._running = True
+        started.set()
+        return []
+
+    monkeypatch.setattr(runtime, "start", slow_start)
+    window = MainWindow(runtime, start_tracking=True)
+    window.show()
+    try:
+        begin = time.monotonic()
+        until = begin + 0.2
+        while time.monotonic() < until:
+            app.processEvents()
+            time.sleep(0.01)
+        # The window must stay responsive while the 400 ms startup runs.
+        assert time.monotonic() - begin < 0.35
+        assert window._busy
+        assert not started.is_set()
+
+        deadline = time.monotonic() + 3.0
+        while not started.is_set() and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        assert started.is_set()
+        deadline = time.monotonic() + 3.0
+        while window._busy and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        assert not window._busy
+    finally:
+        window.close()
+        app.processEvents()
+        runtime.stop()

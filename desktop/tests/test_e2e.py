@@ -233,7 +233,12 @@ def test_phone_imu_time_sync_and_hmd_orientation():
         runtime.start(start_tracking=False)
 
         client_time = 1234.5
-        phone.sendto(pack_time_ping(sequence=7, client_time=client_time), target)
+        phone.sendto(
+            pack_time_ping(
+                sequence=7, client_time=client_time, token=config.phone.token
+            ),
+            target,
+        )
         data, _ = phone.recvfrom(1024)
         kind, pong = parse_packet(data)
         assert kind == PacketType.TIME_PONG
@@ -252,6 +257,7 @@ def test_phone_imu_time_sync_and_hmd_orientation():
                     acceleration=(0.0, 0.0, 9.81),
                     accuracy=3,
                     screen_rotation=1,
+                    token=config.phone.token,
                 ),
                 target,
             )
@@ -309,6 +315,7 @@ def test_phone_imu_time_sync_and_hmd_orientation():
                     acceleration=(0.0, 0.0, 9.81),
                     accuracy=3,
                     screen_rotation=1,
+                    token=config.phone.token,
                 ),
                 target,
             )

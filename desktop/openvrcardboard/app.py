@@ -135,7 +135,6 @@ def run_self_test() -> int:
         import mediapipe
 
         try:
-            from mediapipe.tasks import python as tasks_python
             from mediapipe.tasks.python import vision
         except ImportError as exc:
             raise RuntimeError("the MediaPipe Tasks API is missing") from exc
@@ -156,9 +155,9 @@ def run_self_test() -> int:
         return str(getattr(mss, "__version__", "available"))
 
     def video_codec() -> str:
+        from .config import PhoneConfig
         from .encoder import choose_stream_codec
         from .gpu import detect_gpu
-        from .config import PhoneConfig
 
         caps = detect_gpu()
         codec, reason = choose_stream_codec(PhoneConfig())
@@ -200,8 +199,8 @@ def run_self_test() -> int:
 
 
 def print_config(config: AppConfig, path: Optional[Path]) -> None:
-    import json
     import dataclasses
+    import json
 
     payload = dataclasses.asdict(config)
     print(json.dumps(payload, indent=2))

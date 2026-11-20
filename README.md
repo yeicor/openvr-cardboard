@@ -65,25 +65,36 @@ API 37 with AGP 9.5.1 and Gradle 9.9.1.
 
 ## Downloads
 
-CI builds self-contained desktop packages on every push to `main`. No Python
-installation is required for any of them, and there are no tags or GitHub
-releases to wait for: open the **Actions** tab, select the latest successful
-**CI** run and download the `openvrcardboard-build-<commit>` artifact. Extract
-it and use the folder for your platform:
+Tagged builds are published under
+[**GitHub Releases**](https://github.com/yeicor/openvr-cardboard/releases).
+Each release includes the Windows setup executable, portable Windows and Linux
+packages, the signed Android APK, the Python wheel/source distribution, the
+standalone SteamVR drivers, a CycloneDX SBOM and `SHA256SUMS`. No Python
+installation is required for the packaged builds.
 
-| Path inside the artifact | Contents |
+Every push to `main` also produces an untagged CI artifact. Open the
+**Actions** tab, select the latest successful **CI** run and download
+`openvrcardboard-build-<commit>`:
+
+| Release asset | Contents |
 | --- | --- |
-| `package-windows/OpenVR-Cardboard-<version>-Setup.exe` | Windows installer (Inno Setup), app, frozen PyInstaller runtime, SteamVR driver |
-| `package-windows/openvrcardboard.zip` | Portable Windows folder + installer executable |
-| `package-linux/openvrcardboard.tar.gz` | Portable Linux folder + installer executable + bundled demo |
-| `package-linux/openvrcardboard-<version>-linux-x86_64.AppImage` | Linux single-file app |
-| `demo-windows/openxr-simple-example-windows-x64.zip` | Free/open-source OpenXR demo for Windows |
-| `android-debug-apk/app-debug.apk` | Debug Android phone app |
+| `OpenVR-Cardboard-<version>-windows-x64-Setup.exe` | Windows installer (Inno Setup), app, frozen PyInstaller runtime, SteamVR driver |
+| `OpenVR-Cardboard-<version>-windows-x64-portable.zip` | Portable Windows folder + installer executable |
+| `OpenVR-Cardboard-<version>-linux-x86_64.tar.gz` | Portable Linux folder + installer executable + bundled demo |
+| `OpenVR-Cardboard-<version>-linux-x86_64.AppImage` | Linux single-file app |
+| `OpenVR-Cardboard-<version>-android.apk` | Signed Android phone app |
+| `openvrcardboard-<version>-py3-none-any.whl` | Python wheel for source installs |
+| `openxr-simple-example-<version>-windows-x64.zip` | Free/open-source OpenXR demo for Windows |
+| `openvrcardboard-steamvr-driver-<version>-linux-x64.tar.gz` | Standalone SteamVR driver for Linux |
+| `openvrcardboard-steamvr-driver-<version>-windows-x64.zip` | Standalone SteamVR driver for Windows |
+| `sbom.cdx.json`, `SHA256SUMS` | Dependency inventory and SHA-256 checksums |
 
 The Windows `.exe` is produced by GitHub Actions on `windows-latest`, not by a
 local Linux build. The portable packages include the SteamVR driver compiled by
 the matching CI job. Linux packages also include the pinned Monado OpenXR
 runtime, the OpenXR loader, the capture shim and `openxr-simple-example`.
+The Android APK is signed with the project release key so updates install over
+each other; debug and release builds are not interchangeable.
 
 The installer registers the driver in the detected SteamVR installation and
 records every change so it can be undone:
@@ -533,13 +544,29 @@ scripts/run-e2e.sh android testDebugUnitTest assembleDebug
 ## Tests and CI
 
 ```bash
-cd desktop && python3 -m pytest -q
+cd desktop
+uv sync --locked --all-extras           # exact versions from uv.lock
+uv run ruff check .                     # lint
+uv run mypy                             # typed core modules
+uv run pytest -q --cov                  # unit suite + coverage floor
+```
+```bash
+# from the repository root, once:
+uv run --directory desktop pre-commit install --config ../.pre-commit-config.yaml
+```
+
+```bash
 ctest --test-dir driver/build --output-on-failure
 scripts/build-openxr.sh                 # Monado + OpenXR loader + example + shim
 scripts/run-e2e.sh desktop              # full Python suite in Docker
 scripts/run-e2e.sh android              # Kotlin tests + debug APK
 scripts/run-e2e.sh emulator             # recorded OpenXR emulator E2E (needs KVM)
 ```
+
+CI runs lint, type checking, the coverage floor, the C++ driver tests, the
+Linux and Windows desktop suites, Kotlin tests and the recorded emulator E2E.
+Tag pushes additionally build a signed Android release and publish the release
+assets listed above.
 
 The desktop suite covers the wire protocol, pose fusion, board PnP and the
 error-state filter, ArUco maths, calibration, MediaPipe wrappers, gamepads, the
@@ -590,9 +617,11 @@ Logs:
 
 - The driver link is loopback-only by default and carries no authentication.
   Keep `driver.udp_host` at `127.0.0.1` unless you understand the risk.
-- Phone IMU and video are plaintext on your LAN. Set `phone.token` and use a
-  trusted network. The Android app requests only network and wake-lock
-  permissions.
+- Phone IMU, clock sync and video are plaintext on your LAN. Set `phone.token`
+  to authenticate the IMU/clock packets and the video WebSocket, and use a
+  trusted network. The Android app requests `INTERNET`, `ACCESS_NETWORK_STATE`,
+  `ACCESS_WIFI_STATE` and `WAKE_LOCK`; it does not request camera, microphone,
+  location or storage permissions.
 - Webcam frames stay on the machine unless you explicitly capture them or use
   the phone camera source.
 - Test recordings contain synthetic scenes, not real camera or desktop data.

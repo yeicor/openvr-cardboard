@@ -27,7 +27,8 @@ from .pipeline import FusionWorker, TrackingWorker
 from .protocol import DeviceId
 from .state import SharedState
 from .types import PhoneSample, RuntimeStatus
-from .video import VideoError, VideoStreamServer
+from .video import VideoError
+from .video_server import VideoStreamServer
 
 LOGGER = logging.getLogger(__name__)
 
@@ -60,7 +61,9 @@ class Runtime:
             on_haptic=self._on_haptic,
         )
         self.phone = PhoneImuReceiver(
-            port=config.phone.imu_port, on_sample=self._on_phone_sample
+            port=config.phone.imu_port,
+            token=config.phone.token,
+            on_sample=self._on_phone_sample,
         )
         self.estimator = PhonePoseEstimator(
             neutral_position=config.tracking.manual_hmd_position,

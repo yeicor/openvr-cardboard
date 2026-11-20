@@ -4,9 +4,9 @@ import time
 import numpy as np
 import pytest
 
+from openvrcardboard.boards import boards_from_config
 from openvrcardboard.calibration import CameraModel, camera_model_for_config
 from openvrcardboard.config import AppConfig, CameraConfig
-from openvrcardboard.boards import boards_from_config
 from openvrcardboard.markers import BoardTracker
 from openvrcardboard.mathutil import angle_between
 

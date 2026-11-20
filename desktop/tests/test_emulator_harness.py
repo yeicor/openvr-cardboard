@@ -1,8 +1,11 @@
 """Unit coverage for the Android emulator harness' evidence extraction."""
 
 import json
+import os
 
-from openvrcardboard.emulator_e2e import E2EConfig, EmulatorE2E
+import pytest
+
+from e2e.emulator import E2EConfig, EmulatorE2E
 
 
 def _status(step: int) -> dict:
@@ -100,3 +103,79 @@ def test_harness_config_uses_synthetic_openxr_stack(tmp_path):
     assert harness.openxr_remote_port != harness.openxr_capture_port
     assert payload["openxr"]["remote_port"] == harness.openxr_remote_port
     assert payload["openxr"]["capture_port"] == harness.openxr_capture_port
+
+
+def test_harness_helpers_format_and_clip_text(tmp_path):
+    from e2e.emulator import EmulatorE2E, _mean, _utc_now
+
+    assert _mean([]) == 0.0
+    assert _mean([1.0, 2.0]) == 1.5
+    assert _utc_now().endswith("+00:00")
+
+    path = tmp_path / "log.txt"
+    path.write_text("one\ntwo\nthree\n")
+    assert EmulatorE2E._read_text(path) == "one\ntwo\nthree\n"
+    assert EmulatorE2E._tail(path, lines=2) == "two\nthree"
+    assert EmulatorE2E._read_text(tmp_path / "missing") == ""
+
+
+def test_harness_detects_display_and_ports(monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+
+    from e2e.emulator import _display_ready, _free_port, _port_open
+
+    monkeypatch.setattr(
+        "e2e.emulator.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0),
+    )
+    assert _display_ready(":99")
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired("xdpyinfo", 5)
+
+    monkeypatch.setattr("e2e.emulator.subprocess.run", timeout)
+    assert not _display_ready(":99")
+
+    port = _free_port()
+    assert 0 < port < 65536
+    assert not _port_open("127.0.0.1", port)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the harness expects a Unix adb layout")
+def test_harness_finds_an_android_sdk(monkeypatch, tmp_path):
+    adb = tmp_path / "platform-tools" / "adb"
+    adb.parent.mkdir(parents=True)
+    adb.write_text("#!/bin/sh\n")
+    monkeypatch.setenv("ANDROID_HOME", str(tmp_path))
+    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
+    harness = EmulatorE2E(E2EConfig(artifacts=tmp_path / "artifacts"))
+
+    harness._find_sdk()
+    assert harness.sdk == tmp_path
+    assert harness.adb == str(adb)
+    assert harness.env["ANDROID_HOME"] == str(tmp_path)
+    assert str(adb.parent) in harness.env["PATH"].split(os.pathsep)
+
+
+def test_harness_uses_an_explicit_apk(monkeypatch, tmp_path):
+    apk = tmp_path / "app-debug.apk"
+    apk.write_bytes(b"apk")
+    harness = EmulatorE2E(E2EConfig(artifacts=tmp_path / "artifacts", apk=apk))
+
+    harness._prepare_apk()
+    assert harness.apk == apk
+
+
+def test_harness_writes_summary_and_result(tmp_path):
+    harness = EmulatorE2E(E2EConfig(artifacts=tmp_path))
+    harness.markers_seen = {10, 0, 5}
+    harness.screenshot_mean = 12.345
+    harness._write_summary()
+
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    assert summary["status"] == "running"
+    assert summary["package"] == "dev.openvrcardboard.phone"
+    assert summary["screenshots"]["mean"] == 12.35
+    assert harness._result().markers_seen == [0, 5, 10]
+    assert harness._result().summary == tmp_path / "summary.json"

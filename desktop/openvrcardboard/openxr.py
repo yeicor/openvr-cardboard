@@ -28,14 +28,13 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
 
 from .config import default_config_dir
-
 from .fusion import ComposedFrame
 from .mathutil import normalize
 from .monado_ipc import monado_socket_fits

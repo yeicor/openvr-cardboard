@@ -1,5 +1,4 @@
 import json
-import math
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +13,7 @@ from openvrcardboard.calibration import (
     optical_point_to_play,
 )
 from openvrcardboard.config import CameraConfig
-from openvrcardboard.mathutil import IDENTITY, OPTICAL_TO_VIEW, normalize, rotate
+from openvrcardboard.mathutil import OPTICAL_TO_VIEW, rotate
 
 BASE = Path(__file__).resolve().parent
 

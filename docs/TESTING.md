@@ -1,9 +1,10 @@
 # Testing
 
-The project has four test layers:
+The project has five test layers:
 
 | Layer | Command | Needs |
 | --- | --- | --- |
+| Lint, types and coverage | `cd desktop && uv run ruff check . && uv run mypy && uv run pytest -q --cov` | `uv` (or install the `dev` dependency group) |
 | Python unit tests | `cd desktop && python3 -m pytest -q` | Python 3.12+ and the base dependencies |
 | C++ driver test | `ctest --test-dir driver/build --output-on-failure` | A built driver |
 | Container suites | `scripts/run-e2e.sh desktop` / `scripts/run-e2e.sh android` | Docker |
@@ -17,8 +18,20 @@ cmake --build driver/build -j4
 ctest --test-dir driver/build --output-on-failure
 
 cd desktop
-python3 -m pytest -q
+uv sync --locked --all-extras
+uv run ruff check .
+uv run mypy
+uv run pytest -q --cov
 ```
+
+`uv.lock` pins every dependency. Ruff checks correctness and import order,
+mypy covers the fully annotated core modules listed in `pyproject.toml`, and
+`pytest-cov` enforces the floor in `[tool.coverage.report]`. The same commands
+run in the CI `quality` job. To wire them into a local git hook, run
+`uv run --directory desktop pre-commit install --config ../.pre-commit-config.yaml`
+from the repository root. The hooks invoke the same locked Ruff and mypy that
+CI uses. Test-only emulator tooling lives in `desktop/e2e/` rather than the
+installed runtime package.
 
 The Python suite covers the wire protocol, pose composition, board geometry,
 board-level PnP, the error-state Kalman filter and tracking state machine,
@@ -44,7 +57,10 @@ after three consistent samples. `test_synthetic.py` renders complete
 five-marker boards with the custom 3×3 dictionary and asserts detection, pose
 accuracy and frame-to-frame orientation continuity. `test_phone_link.py` covers
 the clock-offset estimate, one-sample reorder buffer and stale/duplicate
-rejection.
+rejection. `test_installer.py` covers the CLI install/uninstall/status paths,
+`test_mediapipe_models.py` covers model lookup, cache verification and atomic
+downloads, `test_netutil.py` covers the per-source UDP rate limiter, and
+`test_release_scripts.py` covers release asset collection and SBOM generation.
 
 ## Desktop container suite
 
@@ -138,7 +154,7 @@ SDK platform-tools, the emulator, ffmpeg and the `android-34;google_apis;x86_64`
 system image. The runner passes `/dev/kvm` into the container. Without KVM the
 target exits with a clear error; use `desktop` and `android` separately instead.
 
-The harness (`desktop/openvrcardboard/emulator_e2e.py`) performs these steps:
+The harness (`desktop/e2e/emulator.py`) performs these steps:
 
 1. creates or reuses an AVD, boots the emulator headless with software GL and
    waits for `sys.boot_completed`;

@@ -13,7 +13,7 @@ import io
 import os
 import socket
 import time
-from pathlib import Path
+from importlib.util import find_spec
 
 import numpy as np
 import pytest
@@ -24,10 +24,17 @@ from openvrcardboard.openxr_stack import OpenXRStack, find_openxr_prefix
 from openvrcardboard.runtime import Runtime
 
 PREFIX = find_openxr_prefix()
+_MISSING_OPTIONAL = [
+    name for name in ("cv2", "mediapipe") if find_spec(name) is None
+]
 pytestmark = pytest.mark.skipif(
     PREFIX is None or not os.environ.get("DISPLAY"),
     reason="OpenXR runtime or display server is unavailable",
 )
+if _MISSING_OPTIONAL:
+    pytestmark = pytest.mark.skip(
+        reason="tracking stack is unavailable: install " + ", ".join(_MISSING_OPTIONAL)
+    )
 
 
 def _free_port() -> int:

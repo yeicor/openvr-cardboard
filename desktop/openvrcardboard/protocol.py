@@ -6,6 +6,7 @@ uses only the standard library so it can be tested without OpenCV or Qt.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import struct
 from dataclasses import dataclass, field
@@ -24,6 +25,11 @@ IMU = struct.Struct("<d4f3f3fB3x")
 TIME_PING = struct.Struct("<d")
 TIME_PONG = struct.Struct("<dd")
 VIDEO_FRAME = struct.Struct("<BBHHHId")
+
+# Phone IMU and TIME_PING packets carry this many trailing bytes when a
+# pairing token is configured: the first 16 bytes of SHA-256(token).  It is a
+# fixed-size authenticator, so the token itself never travels over UDP.
+AUTH_SIZE = 16
 
 assert HEADER.size == 12
 assert DEVICE_POSE.size == 56
@@ -158,12 +164,14 @@ class PhoneImuPacket:
     acceleration: tuple[float, float, float]
     accuracy: int
     screen_rotation: int = 0
+    auth: bytes = b""
 
 
 @dataclass(slots=True)
 class TimePing:
     sequence: int
     client_time: float
+    auth: bytes = b""
 
 
 @dataclass(slots=True)
@@ -252,16 +260,19 @@ def unpack_state(data: bytes) -> StatePacket:
         values = DEVICE_POSE.unpack_from(data, offset)
         offset += DEVICE_POSE.size
         (device_id, flags, _reserved, *floats) = values
-        devices.append(
-            DevicePose(
-                device_id=device_id,
-                position=tuple(floats[0:3]),
-                rotation=tuple(floats[3:7]),
-                velocity=tuple(floats[7:10]),
-                angular_velocity=tuple(floats[10:13]),
-                flags=DeviceFlags(flags),
+        try:
+            devices.append(
+                DevicePose(
+                    device_id=device_id,
+                    position=tuple(floats[0:3]),
+                    rotation=tuple(floats[3:7]),
+                    velocity=tuple(floats[7:10]),
+                    angular_velocity=tuple(floats[10:13]),
+                    flags=DeviceFlags(flags),
+                )
             )
-        )
+        except ValueError as exc:
+            raise ProtocolError(f"invalid device pose: {exc}") from exc
     if len(data) < offset + 4:
         raise ProtocolError("missing input count")
     input_count = data[offset]
@@ -275,18 +286,23 @@ def unpack_state(data: bytes) -> StatePacket:
         values = CONTROLLER_INPUT.unpack_from(data, offset)
         offset += CONTROLLER_INPUT.size
         device_id, buttons, trigger, grip, joy_x, joy_y, pad_x, pad_y, _reserved = values
-        inputs.append(
-            ControllerInput(
-                device_id=device_id,
-                buttons=Buttons(buttons),
-                trigger=trigger,
-                grip=grip,
-                joystick_x=joy_x,
-                joystick_y=joy_y,
-                trackpad_x=pad_x,
-                trackpad_y=pad_y,
+        try:
+            inputs.append(
+                ControllerInput(
+                    device_id=device_id,
+                    buttons=Buttons(buttons),
+                    trigger=trigger,
+                    grip=grip,
+                    joystick_x=joy_x,
+                    joystick_y=joy_y,
+                    trackpad_x=pad_x,
+                    trackpad_y=pad_y,
+                )
             )
-        )
+        except ValueError as exc:
+            raise ProtocolError(
+                f"invalid controller input (device id {device_id}): {exc}"
+            ) from exc
     return StatePacket(
         sequence=sequence,
         timestamp=timestamp,
@@ -334,6 +350,17 @@ def unpack_status(data: bytes) -> DriverStatus:
     return DriverStatus(sequence, protocol_version, device_count, uptime_ms, state_packets, parse_errors)
 
 
+def auth_tag(token: str) -> bytes:
+    """Return the fixed-size authenticator appended to phone UDP packets.
+
+    An empty token returns an empty tag: authentication is opt-in and the
+    desktop accepts unauthenticated phone packets only when no token is set.
+    """
+    if not token:
+        return b""
+    return hashlib.sha256(str(token).encode("utf-8")).digest()[:AUTH_SIZE]
+
+
 def pack_imu(
     sequence: int,
     timestamp: float,
@@ -342,17 +369,19 @@ def pack_imu(
     acceleration: Sequence[float],
     accuracy: int,
     screen_rotation: int = 0,
+    token: str = "",
 ) -> bytes:
     if len(quaternion) != 4 or len(gyroscope) != 3 or len(acceleration) != 3:
         raise ValueError("invalid IMU vector length")
     tail = (int(accuracy) & 0xFF) | ((int(screen_rotation) & 0x03) << 2)
-    return _header(PacketType.IMU, sequence) + IMU.pack(
+    packet = _header(PacketType.IMU, sequence) + IMU.pack(
         float(timestamp),
         *map(float, quaternion),
         *map(float, gyroscope),
         *map(float, acceleration),
         tail,
     )
+    return packet + auth_tag(token)
 
 
 def unpack_imu(data: bytes) -> PhoneImuPacket:
@@ -363,6 +392,7 @@ def unpack_imu(data: bytes) -> PhoneImuPacket:
         raise ProtocolError("not an IMU packet")
     values = IMU.unpack_from(data, HEADER.size)
     (timestamp, qx, qy, qz, qw, gx, gy, gz, ax, ay, az, tail) = values
+    auth_offset = HEADER.size + IMU.size
     return PhoneImuPacket(
         sequence=sequence,
         timestamp=timestamp,
@@ -371,11 +401,16 @@ def unpack_imu(data: bytes) -> PhoneImuPacket:
         acceleration=(ax, ay, az),
         accuracy=tail & 0x03,
         screen_rotation=(tail >> 2) & 0x03,
+        auth=bytes(data[auth_offset : auth_offset + AUTH_SIZE]),
     )
 
 
-def pack_time_ping(sequence: int, client_time: float) -> bytes:
-    return _header(PacketType.TIME_PING, sequence) + TIME_PING.pack(float(client_time))
+def pack_time_ping(sequence: int, client_time: float, token: str = "") -> bytes:
+    return (
+        _header(PacketType.TIME_PING, sequence)
+        + TIME_PING.pack(float(client_time))
+        + auth_tag(token)
+    )
 
 
 def unpack_time_ping(data: bytes) -> TimePing:
@@ -385,7 +420,12 @@ def unpack_time_ping(data: bytes) -> TimePing:
     if magic != MAGIC or version != VERSION or packet_type != PacketType.TIME_PING:
         raise ProtocolError("not a TIME_PING packet")
     (client_time,) = TIME_PING.unpack_from(data, HEADER.size)
-    return TimePing(sequence=sequence, client_time=client_time)
+    auth_offset = HEADER.size + TIME_PING.size
+    return TimePing(
+        sequence=sequence,
+        client_time=client_time,
+        auth=bytes(data[auth_offset : auth_offset + AUTH_SIZE]),
+    )
 
 
 def pack_time_pong(sequence: int, client_time: float, server_time: float) -> bytes:

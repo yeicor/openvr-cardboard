@@ -1,18 +1,17 @@
-import os
 
 import pytest
 
 from openvrcardboard import gpu
 from openvrcardboard.config import PhoneConfig
 from openvrcardboard.encoder import (
+    FfmpegVideoEncoder,
     IvfDemuxer,
     NvencVideoEncoder,
-    FfmpegVideoEncoder,
     TsDemuxer,
+    _is_keyframe,
     choose_stream_codec,
     parameter_sets,
     select_stream_encoder,
-    _is_keyframe,
 )
 from openvrcardboard.gpu import GpuCapabilities
 
@@ -200,11 +199,11 @@ def test_cpu_encoder_produces_annex_b_h264_access_units():
     ffmpeg = gpu.find_ffmpeg()
     if not ffmpeg:
         pytest.skip("ffmpeg is not available")
-    caps = gpu.GpuCapabilities(ffmpeg=ffmpeg)
     if "libx264" not in gpu._query_encoders(ffmpeg)[0]:
         pytest.skip("ffmpeg has no libx264 encoder")
-    import numpy as np
     import time as _time
+
+    import numpy as np
 
     encoder = FfmpegVideoEncoder(
         "h264", 320, 180, 15, bitrate_mbps=2, ffmpeg=ffmpeg, encoder="libx264"

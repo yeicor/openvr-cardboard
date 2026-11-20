@@ -12,8 +12,11 @@ from openvrcardboard.protocol import (
     ControllerInput,
     DeviceFlags,
     DeviceId,
+    ProtocolError,
     pack_haptic,
+    pack_state,
     pack_status,
+    parse_packet,
     unpack_state,
 )
 from openvrcardboard.types import Pose
@@ -141,6 +144,68 @@ def test_driver_link_receives_haptics_and_status():
         assert stats.haptic_packets == 1
         assert stats.status_packets == 1
         assert stats.connected
+    finally:
+        link.stop()
+        server.close()
+
+
+def test_unpack_state_rejects_unknown_input_device_id():
+    packet = bytearray(
+        pack_state(
+            1,
+            1.0,
+            [],
+            [ControllerInput(device_id=DeviceId.LEFT, trigger=0.5)],
+        )
+    )
+    # Input count occupies four bytes after the 12-byte header, 16-byte
+    # timestamp/count block and the (empty) device array.
+    input_offset = 12 + 16 + 4
+    packet[input_offset] = 9
+    with pytest.raises(ProtocolError, match="invalid controller input"):
+        unpack_state(bytes(packet))
+    with pytest.raises(ProtocolError):
+        parse_packet(bytes(packet))
+
+
+def test_driver_link_survives_a_malformed_state_input_id():
+    status_event = threading.Event()
+    received = {}
+
+    def on_status(status):
+        received["status"] = status
+        status_event.set()
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server.bind(("127.0.0.1", 0))
+    link = DriverLink(
+        host="127.0.0.1",
+        port=server.getsockname()[1],
+        on_status=on_status,
+    )
+    link.start()
+    try:
+        link.update_frame(ComposedFrame(hmd=make_pose()), now=1.0)
+        link.send_once(now=1.0)
+        target = ("127.0.0.1", link.local_port)
+        malformed = bytearray(
+            pack_state(
+                2,
+                1.0,
+                [],
+                [ControllerInput(device_id=DeviceId.RIGHT)],
+            )
+        )
+        malformed[12 + 16 + 4] = 42
+        server.sendto(bytes(malformed), target)
+        server.sendto(
+            pack_status(3, device_count=1, uptime_ms=10, state_packets=1, parse_errors=0),
+            target,
+        )
+        assert status_event.wait(1.0)
+        assert received["status"].device_count == 1
+        assert link.stats().parse_errors == 1
+        assert link.stats().status_packets == 1
     finally:
         link.stop()
         server.close()

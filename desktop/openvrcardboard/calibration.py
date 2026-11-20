@@ -21,7 +21,6 @@ from .config import CameraConfig, resolve_relative
 from .mathutil import (
     OPTICAL_TO_VIEW,
     camera_optical_to_play,
-    multiply,
     multiply_many,
     normalize,
     rotate,

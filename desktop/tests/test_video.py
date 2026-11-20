@@ -16,11 +16,11 @@ from openvrcardboard.protocol import (
 from openvrcardboard.video import (
     OpenXRCaptureSource,
     TestPatternSource,
-    VideoStreamServer,
     compose_image,
     encode_jpeg,
     frame_dimensions,
 )
+from openvrcardboard.video_server import VideoStreamServer
 
 
 class FakeCapture:

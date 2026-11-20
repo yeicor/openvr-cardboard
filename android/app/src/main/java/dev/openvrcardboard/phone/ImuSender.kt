@@ -26,6 +26,7 @@ class ImuSender(
     private val host: String,
     private val port: Int,
     sensorHz: Int,
+    private val token: String,
     private val rotationProvider: () -> Int,
     private val listener: Listener,
 ) : SensorEventListener {
@@ -71,7 +72,9 @@ class ImuSender(
     var clockOffsetMs: Double = 0.0
         private set
 
-    private val buffer = ByteBuffer.allocate(Protocol.IMU_SIZE).order(ByteOrder.LITTLE_ENDIAN)
+    private val authTag = Protocol.authTag(token)
+    private val buffer = ByteBuffer.allocate(Protocol.IMU_SIZE + authTag.size)
+        .order(ByteOrder.LITTLE_ENDIAN)
     private val receiveBuffer = ByteArray(128)
 
     private val periodUs: Int = (1_000_000 / sensorHz.coerceIn(10, 400)).coerceAtLeast(1)
@@ -149,7 +152,7 @@ class ImuSender(
             while (running.get() && !Thread.currentThread().isInterrupted) {
                 try {
                     val clientTime = SystemClock.elapsedRealtimeNanos() / 1e9
-                    val ping = Protocol.timePingPacket(pingSequence++, clientTime)
+                    val ping = Protocol.timePingPacket(pingSequence++, clientTime, authTag)
                     sock.send(DatagramPacket(ping, ping.size, destination))
                     Thread.sleep(5000)
                 } catch (_: InterruptedException) {
@@ -210,8 +213,9 @@ class ImuSender(
                 acceleration,
                 accuracy,
                 rotationProvider(),
+                authTag,
             )
-            sock.send(DatagramPacket(buffer.array(), Protocol.IMU_SIZE, destination))
+            sock.send(DatagramPacket(buffer.array(), Protocol.IMU_SIZE + authTag.size, destination))
             packetsSent += 1
             val now = SystemClock.elapsedRealtime()
             if (now - lastStatusAt > 1000) {

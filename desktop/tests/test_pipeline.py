@@ -1,7 +1,7 @@
 import numpy as np
 
 from openvrcardboard.pipeline import _resize_for_inference
-from openvrcardboard.pose_tracking import BodyTracker, body_joint_names
+from openvrcardboard.pose_tracking import body_joint_names
 
 
 def test_inference_downscale_preserves_aspect():

@@ -4,6 +4,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -15,6 +16,21 @@ import java.nio.ByteOrder
 class ProtocolTest {
     private fun wrap(data: ByteArray): ByteBuffer =
         ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+
+    private fun loadGoldenVectors(): Map<String, ByteArray> {
+        val path = System.getProperty("ovrc.goldenVectors")
+            ?: "../../protocol/golden_vectors.txt"
+        val vectors = mutableMapOf<String, ByteArray>()
+        File(path).forEachLine { line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) return@forEachLine
+            val parts = trimmed.split(Regex("\\s+"))
+            if (parts.size != 2) return@forEachLine
+            val bytes = parts[1].chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            vectors[parts[0]] = bytes
+        }
+        return vectors
+    }
 
     private fun assertHeader(data: ByteArray, expectedType: Int, expectedSequence: Int) {
         assertEquals('O'.code.toByte(), data[0])
@@ -100,6 +116,46 @@ class ProtocolTest {
         assertEquals(Protocol.TIME_PING_SIZE, packet.size)
         assertHeader(packet, Protocol.TYPE_TIME_PING, 9)
         assertEquals(55.125, wrap(packet).getDouble(12), 0.0)
+    }
+
+    @Test
+    fun goldenVectorsMatchSharedPythonAndCppFile() {
+        val vectors = loadGoldenVectors()
+        val auth = Protocol.authTag("test-token")
+        assertEquals(Protocol.AUTH_SIZE, auth.size)
+
+        val imu = Protocol.imuPacket(
+            sequence = 0x01020304,
+            timestamp = 1234.5,
+            quaternion = floatArrayOf(0.1f, 0.2f, 0.3f, 0.9f),
+            gyroscope = floatArrayOf(1.5f, -2.5f, 3.5f),
+            acceleration = floatArrayOf(0.0f, -9.81f, 0.25f),
+            accuracy = 3,
+            screenRotation = 2,
+        )
+        assertArrayEquals(vectors.getValue("imu"), imu)
+        assertArrayEquals(
+            vectors.getValue("imu_auth"),
+            Protocol.imuPacket(
+                sequence = 0x01020304,
+                timestamp = 1234.5,
+                quaternion = floatArrayOf(0.1f, 0.2f, 0.3f, 0.9f),
+                gyroscope = floatArrayOf(1.5f, -2.5f, 3.5f),
+                acceleration = floatArrayOf(0.0f, -9.81f, 0.25f),
+                accuracy = 3,
+                screenRotation = 2,
+                authTag = auth,
+            ),
+        )
+
+        assertArrayEquals(
+            vectors.getValue("time_ping"),
+            Protocol.timePingPacket(sequence = 9, clientTime = 55.125),
+        )
+        assertArrayEquals(
+            vectors.getValue("time_ping_auth"),
+            Protocol.timePingPacket(sequence = 9, clientTime = 55.125, authTag = auth),
+        )
     }
 
     @Test

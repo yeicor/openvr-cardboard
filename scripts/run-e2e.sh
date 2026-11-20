@@ -55,6 +55,10 @@ Environment:
   OVRC_GRADLE_CACHE_VOLUME Override the Gradle cache volume name
   OVRC_OPENXR_ROOT         OpenXR install tree to mount (default out/openxr)
   OVRC_E2E_DURATION        Recorded seconds in the emulator session (default 18)
+  OVRC_ANDROID_KEYSTORE    Keystore path (container path) for signed APKs
+  OVRC_ANDROID_KEYSTORE_PASSWORD, OVRC_ANDROID_KEY_ALIAS,
+  OVRC_ANDROID_KEY_PASSWORD  Remaining release-signing values; all four are
+                           forwarded to the Android container when set.
 EOF
 }
 
@@ -99,7 +103,19 @@ run_desktop() {
 
 run_android() {
     build_android
+    local signing_env=()
+    local name
+    for name in \
+        OVRC_ANDROID_KEYSTORE \
+        OVRC_ANDROID_KEYSTORE_PASSWORD \
+        OVRC_ANDROID_KEY_ALIAS \
+        OVRC_ANDROID_KEY_PASSWORD; do
+        if [ -n "${!name:-}" ]; then
+            signing_env+=(-e "${name}")
+        fi
+    done
     docker run --rm \
+        "${signing_env[@]}" \
         -v "${ROOT}:/workspace" \
         -v "${GRADLE_CACHE_VOLUME}:/home/gradle/.gradle" \
         "${ANDROID_IMAGE}" "$@"

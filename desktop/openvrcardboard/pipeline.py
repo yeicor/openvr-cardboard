@@ -14,13 +14,13 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from .boards import boards_from_config
 from .calibration import CameraModel
 from .camera import CameraCapture
 from .config import AppConfig
 from .driver_link import DriverLink
 from .fusion import ComposedFrame, PhonePoseEstimator, PoseComposer
 from .markers import BoardTracker
-from .boards import boards_from_config
 from .pose_tracking import (
     BodyTracker,
     HandTracker,

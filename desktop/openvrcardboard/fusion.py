@@ -26,9 +26,16 @@ from typing import Iterable, Optional
 import numpy as np
 
 from .config import TrackingConfig
+from .filters import (  # noqa: F401 - re-exported for existing callers
+    AdaptiveQuaternionFilter,
+    LandmarkSmoother,
+    OneEuroFilter,
+    OneEuroVec3,
+    _finite_vector,
+    _smoothing_factor,
+)
 from .mathutil import (
     IDENTITY,
-    angle_between,
     clamp,
     conjugate,
     from_axis_angle,
@@ -56,15 +63,6 @@ SCREEN_ROTATIONS = {
     3: -math.pi / 2.0,
 }
 
-
-from .filters import (  # noqa: F401 - re-exported for existing callers
-    AdaptiveQuaternionFilter,
-    LandmarkSmoother,
-    OneEuroFilter,
-    OneEuroVec3,
-    _finite_vector,
-    _smoothing_factor,
-)
 
 class PoseSmoother:
     """Smooths position and orientation and derives velocities."""

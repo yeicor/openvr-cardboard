@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    # Tag pushes are what publish a GitHub Release. Without an explicit tag
+    # filter GitHub ignores them when `branches` is set.
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -24,10 +27,12 @@ jobs:
     # environments, so their glibc and shared-library SONAMEs must match.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Cache OpenXR build
-        uses: actions/cache@v4
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
           path: out/openxr
           key: ${{ runner.os }}-24.04-openxr-${{ hashFiles('scripts/build-openxr.sh', 'shim/openxr_capture_shim.c') }}
@@ -56,7 +61,7 @@ jobs:
           du -sh openxr-dist/openxr-runtime.tar.gz
 
       - name: Upload OpenXR runtime
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: openxr-runtime
           path: openxr-dist/openxr-runtime.tar.gz
@@ -66,7 +71,9 @@ jobs:
     name: Driver (Linux)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Install build tools
         run: |
@@ -83,7 +90,7 @@ jobs:
         run: ctest --test-dir driver/build --output-on-failure
 
       - name: Upload driver
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: driver-linux-x64
           path: driver/build/openvrcardboard
@@ -93,7 +100,9 @@ jobs:
     name: Driver (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Configure
         run: cmake -S driver -B driver/build -A x64
@@ -105,7 +114,7 @@ jobs:
         run: ctest --test-dir driver/build -C Release --output-on-failure
 
       - name: Upload driver
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: driver-windows-x64
           path: driver/build/openvrcardboard
@@ -117,10 +126,12 @@ jobs:
     # docker/desktop.Dockerfile is Ubuntu 24.04, matching the runtime build.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Download OpenXR runtime
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: openxr-runtime
           path: openxr-runtime
@@ -138,7 +149,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-test-results
           path: artifacts/desktop
@@ -153,9 +164,11 @@ jobs:
       SDL_AUDIODRIVER: dummy
       OPENVRCARDBOARD_DISABLE_GPU: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -175,7 +188,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-windows-test-results
           path: artifacts/desktop-windows
@@ -185,13 +198,15 @@ jobs:
     name: Android tests and APK
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Run JVM tests and build APK
         run: scripts/run-e2e.sh android testDebugUnitTest assembleDebug
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: android-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
@@ -199,13 +214,109 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: android-test-results
           path: |
             android/app/build/test-results/testDebugUnitTest
             android/app/build/reports/tests/testDebugUnitTest
           if-no-files-found: warn
+
+  quality:
+    name: Lint, types and coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Install the locked development environment
+        run: uv sync --directory desktop --locked --all-extras
+
+      - name: Ruff
+        run: uv run --directory desktop --locked --all-extras ruff check .
+
+      - name: Mypy
+        run: uv run --directory desktop --locked --all-extras mypy
+
+      - name: Unit tests with coverage floor
+        env:
+          QT_QPA_PLATFORM: offscreen
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+          OPENVRCARDBOARD_DISABLE_GPU: "1"
+        run: >
+          uv run --directory desktop --locked --all-extras pytest -o addopts= -q
+          -p no:cacheprovider --cov --cov-report=term-missing
+
+  android-release:
+    name: Android signed release
+    # Signed releases are built only for tags or a manual run, so ordinary
+    # pull requests and main pushes do not need the signing secrets.
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      OVRC_ANDROID_IMAGE: openvrcardboard-e2e-android
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Validate signing secrets and decode the keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=0
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD \
+            ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not configured"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then exit 1; fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/release.keystore
+
+      - name: Build and test the signed release APK
+        env:
+          OVRC_ANDROID_KEYSTORE: /workspace/android/release.keystore
+          OVRC_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          OVRC_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          OVRC_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: scripts/run-e2e.sh android testDebugUnitTest assembleRelease
+
+      - name: Verify the APK is signed
+        # The release APK uses APK Signature Scheme v2/v3, which jarsigner
+        # cannot see. apksigner ships with the Android build-tools in the same
+        # image Gradle used for the build.
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            --entrypoint /opt/android-sdk/build-tools/37.0.0/apksigner \
+            "$OVRC_ANDROID_IMAGE" \
+            verify --verbose --print-certs \
+            /workspace/android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Remove the temporary keystore
+        if: always()
+        run: rm -f android/release.keystore
+
+      - name: Upload the signed release APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
 
   emulator-e2e:
     name: Android emulator OpenXR video E2E
@@ -217,16 +328,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Download APK
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: android-debug-apk
           path: android/app/build/outputs/apk/debug
 
       - name: Download OpenXR runtime
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: openxr-runtime
           path: openxr-runtime
@@ -236,7 +349,7 @@ jobs:
           mkdir -p out/openxr
           tar -C out/openxr -xzf openxr-runtime/openxr-runtime.tar.gz
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -267,7 +380,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Run recorded emulator E2E
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 34
           target: google_apis
@@ -285,7 +398,7 @@ jobs:
 
       - name: Upload recordings, screenshots and logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: emulator-e2e-video
           path: artifacts/emulator-e2e
@@ -296,9 +409,11 @@ jobs:
     name: Desktop package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -314,7 +429,7 @@ jobs:
           /tmp/ovrc-wheel/bin/openvrcardboard --version
 
       - name: Upload package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-package
           path: dist
@@ -330,9 +445,11 @@ jobs:
     # their shared-library SONAMEs.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -355,13 +472,13 @@ jobs:
             libbsd0 file
 
       - name: Download driver
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: driver-linux-x64
           path: package-driver
 
       - name: Download OpenXR runtime
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: openxr-runtime
           path: openxr-runtime
@@ -412,7 +529,7 @@ jobs:
           test -x dist/openvrcardboard/openxr/bin/openxr-example
 
       - name: Upload portable package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: package-linux
           path: |
@@ -427,16 +544,18 @@ jobs:
       - desktop-windows
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: desktop/pyproject.toml
 
       - name: Download driver
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: driver-windows-x64
           path: package-driver
@@ -483,7 +602,7 @@ jobs:
           Write-Host "Installer: $($setup.FullName) ($([math]::Round($setup.Length / 1MB, 1)) MB)"
 
       - name: Upload the Windows packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: package-windows
           path: |
@@ -495,10 +614,12 @@ jobs:
     name: OpenXR demo (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Cache vcpkg packages
-        uses: actions/cache@v4
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
           path: C:\vcpkg\installed
           key: ${{ runner.os }}-vcpkg-openxr-demo-${{ hashFiles('scripts/build_demo_windows.ps1') }}
@@ -508,7 +629,7 @@ jobs:
         run: scripts\build_demo_windows.ps1
 
       - name: Upload demo
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: demo-windows
           path: out/openxr-simple-example-windows-x64.zip
@@ -533,7 +654,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: build-assets
 
@@ -541,9 +662,74 @@ jobs:
         run: find build-assets -type f -empty -delete
 
       - name: Upload consolidated build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: openvrcardboard-build-${{ github.sha }}
           path: build-assets
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    # Tags are the only trigger that publishes a release. The tag build has
+    # already produced every platform package and the signed Android APK.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build-artifacts
+      - android-release
+      - quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Download the consolidated CI artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: openvrcardboard-build-${{ github.sha }}
+          path: build-assets
+
+      - name: Download the signed Android APK
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: android-release-apk
+          path: android-release
+
+      - name: Resolve the release version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Collect release assets
+        run: |
+          python3 scripts/prepare_release.py \
+            --build-assets build-assets \
+            --android-apk android-release/app-release.apk \
+            --output release-upload \
+            --version "${{ steps.version.outputs.version }}"
+
+      - name: Generate the SBOM
+        run: |
+          python3 scripts/generate_sbom.py \
+            --lock desktop/uv.lock \
+            --version "${{ steps.version.outputs.version }}" \
+            --output release-upload/sbom.cdx.json
+
+      - name: Generate checksums
+        run: |
+          cd release-upload
+          sha256sum * > SHA256SUMS
+
+      - name: Publish or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-upload/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-upload/* \
+              --title "OpenVR Cardboard ${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi

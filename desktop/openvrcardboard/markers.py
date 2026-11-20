@@ -38,11 +38,10 @@ from .boards import (
     default_boards,
 )
 from .calibration import CameraModel
-from .config import ARUCO_DICTIONARIES, CUSTOM_DICTIONARY_3X3
+from .config import CUSTOM_DICTIONARY_3X3
 from .mathutil import (
     OPTICAL_TO_VIEW,
     conjugate,
-    from_rotvec,
     multiply,
     normalize,
     rotate,
@@ -401,10 +400,6 @@ class BoardTracker:
                 self._last_previous_object[name] = raw_rotation.copy()
                 self._last_previous_times[name] = capture_time
 
-            inlier_corners = np.concatenate(
-                [estimate.corners[marker_id] for marker_id in estimate.marker_ids],
-                axis=0,
-            )
             all_corners = np.concatenate(
                 [estimate.corners[marker_id] for marker_id in sorted(estimate.corners)],
                 axis=0,

@@ -323,7 +323,7 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
         panel.visibility = View.VISIBLE
         updateStatus()
 
-        val sender = ImuSender(host, imuPort, sensorHz, { displayRotation }, this)
+        val sender = ImuSender(host, imuPort, sensorHz, token, { displayRotation }, this)
         imuSender = sender
         sender.start()
 

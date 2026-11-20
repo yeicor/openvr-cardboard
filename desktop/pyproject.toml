@@ -12,7 +12,7 @@ license = "MIT"
 authors = [{ name = "OpenVR Cardboard contributors" }]
 keywords = ["steamvr", "openvr", "vr", "tracking", "webcam", "aruco", "mediapipe"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Environment :: X11 Applications :: Qt",
     "Intended Audience :: End Users/Desktop",
     "Operating System :: Microsoft :: Windows",
@@ -56,6 +56,15 @@ all = [
 openvrcardboard = "openvrcardboard.app:main"
 openvrcardboard-install = "openvrcardboard.installer:main"
 
+[dependency-groups]
+dev = [
+    "mypy>=1.15",
+    "pre-commit>=4.0",
+    "pytest>=8.4",
+    "pytest-cov>=6.2",
+    "ruff>=0.9",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["openvrcardboard*"]
@@ -64,3 +73,40 @@ include = ["openvrcardboard*"]
 testpaths = ["tests"]
 addopts = "-q"
 markers = ["e2e: container end-to-end tests that use real sockets"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+# Start with correctness and import hygiene; style rules can be enabled
+# incrementally without churning the whole codebase at once.
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+# These modules are fully annotated today. Add files here as they reach the
+# same bar; a failing type check then blocks CI instead of accumulating noise.
+files = [
+    "openvrcardboard/config.py",
+    "openvrcardboard/config_validation.py",
+    "openvrcardboard/installer.py",
+    "openvrcardboard/mediapipe_models.py",
+    "openvrcardboard/netutil.py",
+    "openvrcardboard/protocol.py",
+]
+warn_unused_ignores = true
+no_implicit_optional = true
+
+[tool.coverage.run]
+branch = true
+source = ["openvrcardboard"]
+omit = ["openvrcardboard/__main__.py"]
+
+[tool.coverage.report]
+# Modest floor: the container and emulator jobs exercise the optional
+# backends that a bare local run skips, and coverage should ratchet up from
+# here rather than fail on day one.
+fail_under = 65
+skip_covered = true

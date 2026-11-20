@@ -1,4 +1,3 @@
-import numpy as np
 import pytest
 
 from openvrcardboard.config import GamepadConfig
@@ -122,3 +121,50 @@ def test_synthetic_gamepad_manager_publishes_inputs_and_records_haptics():
     finally:
         manager.stop()
     assert not manager.running
+
+
+def test_gamepad_hotplug_scan_is_rate_limited_without_pads(monkeypatch):
+    """An empty joystick list must not re-init SDL on every poll iteration."""
+    import time
+    from types import SimpleNamespace
+
+    from openvrcardboard.gamepad import GamepadManager
+    from openvrcardboard.state import SharedState
+
+    class FakeJoystick:
+        @staticmethod
+        def init():
+            return None
+
+        @staticmethod
+        def quit():
+            return None
+
+        @staticmethod
+        def get_count():
+            return 0
+
+    class FakeEvent:
+        @staticmethod
+        def pump():
+            return None
+
+    pygame = SimpleNamespace(
+        init=lambda: None,
+        joystick=FakeJoystick,
+        event=FakeEvent,
+    )
+    manager = GamepadManager(
+        SharedState(),
+        GamepadConfig(synthetic=False, hotplug_interval_s=1.0),
+        poll_hz=250,
+    )
+    calls: list[float] = []
+    monkeypatch.setattr(manager, "_load_pygame", lambda: pygame)
+    monkeypatch.setattr(manager, "_scan", lambda: calls.append(time.monotonic()))
+    manager.start()
+    try:
+        time.sleep(0.2)
+    finally:
+        manager.stop()
+    assert 1 <= len(calls) <= 2

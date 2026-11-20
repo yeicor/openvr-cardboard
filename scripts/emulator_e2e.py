@@ -53,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    from openvrcardboard.emulator_e2e import E2EConfig, EmulatorE2E
+    from e2e.emulator import E2EConfig, EmulatorE2E
 
     result = EmulatorE2E(
         E2EConfig(

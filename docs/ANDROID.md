@@ -40,21 +40,39 @@ version is `1.1.0` (`versionCode 3`).
 
 ### Command line
 
-The repository does not commit a Gradle wrapper JAR. If Gradle is installed,
-generate one once:
+The Gradle wrapper is committed for Gradle 9.9.1:
 
 ```bash
 cd android
-gradle wrapper --gradle-version 9.9.1
 ./gradlew assembleDebug
 ```
 
-Or invoke the installed Gradle directly:
+### Release signing
+
+Android only installs an update when it is signed by the same key as the
+installed app. Release APKs therefore use one fixed keystore that is stored
+only in GitHub Actions secrets:
+
+| Secret | Contents |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | base64 of the `.jks` keystore |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore password |
+| `ANDROID_KEY_ALIAS` | release key alias |
+| `ANDROID_KEY_PASSWORD` | key password |
+
+Create the keystore once and back it up; losing it means existing installations
+must be uninstalled before they can install a new signed build:
 
 ```bash
-cd android
-gradle assembleDebug
+keytool -genkeypair -v -keystore release.jks -keyalg RSA -keysize 4096 \
+  -validity 10000 -alias openvrcardboard
+base64 -w0 release.jks   # paste into ANDROID_KEYSTORE_BASE64
 ```
+
+The **Android signed release** workflow runs for tags and manual dispatches and
+uploads `android-release-apk`. For a local signed build, point the four
+`OVRC_ANDROID_*` environment variables at the keystore before running
+`./gradlew assembleRelease`; without them the release APK is unsigned.
 
 ### Docker (no local Android SDK)
 
@@ -103,7 +121,7 @@ Start the desktop app before the phone app. The status panel shows both
 | IMU port | `39101` | must match `phone.imu_port` on the desktop |
 | Video port | `8765` | must match `phone.video_port` |
 | Sensor Hz | `120` | requested sensor period, 10–400 |
-| Pairing token | empty | must match `phone.token` if one is set |
+| Pairing token | empty | must match `phone.token` if one is set; authenticates IMU, clock pings and the video socket |
 
 Tap **Start**. The app:
 
@@ -211,7 +229,9 @@ connects but no frame appears, check TCP `8765` and the selected capture source.
   offset and reorders one sample before rejecting stale or duplicate data; the
   `TIME_PING` exchange remains available for diagnostics and offset candidates.
 - The APK requests no camera, microphone, location or storage permissions. It
-  only needs network access and a wake lock.
+  declares `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE` and
+  `WAKE_LOCK` so it can reach the desktop, report network changes and keep the
+  display on while streaming.
 
 ## Troubleshooting
 

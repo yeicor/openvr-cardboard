@@ -30,10 +30,10 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
-from .config import AppConfig, save_config
-from .openxr_stack import OpenXRStack, find_openxr_prefix
+from openvrcardboard.config import AppConfig, save_config
+from openvrcardboard.openxr_stack import OpenXRStack, find_openxr_prefix
 
 PACKAGE = "dev.openvrcardboard.phone"
 ACTIVITY = f"{PACKAGE}/.MainActivity"
@@ -694,8 +694,8 @@ class EmulatorE2E:
         self._wait_for_more_frames(5)
         self._screencap(second)
         try:
-            from PIL import Image
             import numpy as np
+            from PIL import Image
         except ImportError as exc:  # pragma: no cover - dependencies are installed by the image
             raise E2EError(f"Pillow and NumPy are required for screenshots: {exc}") from exc
         left = np.asarray(Image.open(first).convert("RGB"), dtype=np.float32)
@@ -1453,8 +1453,8 @@ class EmulatorE2E:
         )
         if result.returncode == 0 and frame.exists():
             try:
-                from PIL import Image
                 import numpy as np
+                from PIL import Image
 
                 pixels = np.asarray(Image.open(frame).convert("RGB"), dtype=np.float32)
                 info["frame_mean"] = round(float(pixels.mean()), 2)

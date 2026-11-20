@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
@@ -37,7 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..calibration import calibrate_camera_views, detect_chessboard
-from ..camera import CameraCapture, CameraError
+from ..camera import CameraCapture
 from ..config import CameraConfig
 
 LOGGER = logging.getLogger(__name__)

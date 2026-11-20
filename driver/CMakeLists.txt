@@ -85,6 +85,8 @@ if(OVRC_BUILD_TESTS)
   add_executable(ovrc_protocol_test tests/protocol_test.cpp)
   target_include_directories(ovrc_protocol_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
   target_include_directories(ovrc_protocol_test SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openvr")
+  target_compile_definitions(ovrc_protocol_test PRIVATE
+    OVRC_GOLDEN_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/../protocol/golden_vectors.txt")
   if(WIN32)
     target_compile_definitions(ovrc_protocol_test PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(ovrc_protocol_test PRIVATE ws2_32)

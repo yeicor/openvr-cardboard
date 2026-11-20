@@ -3,6 +3,8 @@ import math
 import numpy as np
 import pytest
 
+from openvrcardboard.config import TrackingConfig
+from openvrcardboard.fusion import PoseComposer
 from openvrcardboard.mathutil import (
     conjugate,
     from_axis_angle,
@@ -10,8 +12,6 @@ from openvrcardboard.mathutil import (
     normalize,
     to_rotvec,
 )
-from openvrcardboard.config import TrackingConfig
-from openvrcardboard.fusion import PoseComposer
 from openvrcardboard.tracking_state import (
     ObjectMeasurement,
     TrackedObject,

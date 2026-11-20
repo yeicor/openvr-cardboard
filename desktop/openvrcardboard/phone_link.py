@@ -8,6 +8,7 @@ estimate the desktop clock offset.
 
 from __future__ import annotations
 
+import hmac
 import logging
 import math
 import os
@@ -22,11 +23,12 @@ from typing import Callable, Optional
 import numpy as np
 
 from .mathutil import normalize
+from .netutil import PacketRateLimiter
 from .protocol import (
     PacketType,
     PhoneImuPacket,
     ProtocolError,
-    TimePong,
+    auth_tag,
     pack_time_pong,
     parse_packet,
 )
@@ -46,6 +48,7 @@ class PhoneImuStats:
     rate_hz: float = 0.0
     samples: int = 0
     parse_errors: int = 0
+    auth_failures: int = 0
     pings: int = 0
     last_accuracy: int = 0
     last_sequence: int = 0
@@ -54,6 +57,7 @@ class PhoneImuStats:
     clock_offset_ms: float = 0.0
     dropped_samples: int = 0
     buffered_samples: int = 0
+    rate_limited: int = 0
 
     @property
     def connected(self) -> bool:
@@ -68,11 +72,14 @@ class PhoneImuReceiver:
         host: str = "0.0.0.0",
         port: int = 39101,
         on_sample: Optional[SampleCallback] = None,
+        token: str = "",
         socket_factory: Callable[..., socket.socket] = socket.socket,
     ):
         self.host = host
         self.port = int(port)
         self.on_sample = on_sample
+        self.token = str(token or "")
+        self._auth = auth_tag(self.token)
         self._socket_factory = socket_factory
         self._socket = self._open_socket()
 
@@ -88,6 +95,7 @@ class PhoneImuReceiver:
         self._rate_hz = 0.0
         self._samples = 0
         self._parse_errors = 0
+        self._auth_failures = 0
         self._pings = 0
         self._last_accuracy = 0
         self._screen_rotation = 0
@@ -107,6 +115,8 @@ class PhoneImuReceiver:
         self._pending: list[PhoneSample] = []
         self._last_emitted_timestamp = 0.0
         self._dropped_samples = 0
+        # IMU streams top out near 500 Hz; anything above this is a flood.
+        self._limiter = PacketRateLimiter(rate_hz=2000.0)
 
     def _open_socket(self) -> socket.socket:
         sock = self._socket_factory(socket.AF_INET, socket.SOCK_DGRAM)
@@ -174,16 +184,28 @@ class PhoneImuReceiver:
             self.flush(now)
             if not readable:
                 continue
-            try:
-                data, address = self._socket.recvfrom(4096)
-            except BlockingIOError:
-                continue
-            except OSError as exc:
-                if self._stop.is_set():
+            # Bound the work done per iteration so a flood cannot delay the
+            # reorder flush or make stop() wait for an unbounded queue.
+            for _ in range(32):
+                try:
+                    data, address = self._socket.recvfrom(4096)
+                except BlockingIOError:
                     break
-                LOGGER.debug("phone IMU receive failed: %s", exc)
-                continue
-            self.handle_datagram(data, address, time.monotonic())
+                except OSError as exc:
+                    if self._stop.is_set():
+                        break
+                    LOGGER.debug("phone IMU receive failed: %s", exc)
+                    break
+                stamp = time.monotonic()
+                if not self._limiter.allow(address, stamp):
+                    continue
+                self.handle_datagram(data, address, stamp)
+                try:
+                    readable, _, _ = select.select([self._socket], [], [], 0.0)
+                except (OSError, ValueError):
+                    break
+                if not readable:
+                    break
 
     # ------------------------------------------------------------------
     # Datagram handling
@@ -197,6 +219,12 @@ class PhoneImuReceiver:
             with self._lock:
                 self._parse_errors += 1
             LOGGER.debug("ignoring malformed phone packet from %s: %s", address, exc)
+            return False
+
+        if not self._authorized(payload):
+            with self._lock:
+                self._auth_failures += 1
+            LOGGER.debug("ignoring unauthenticated phone packet from %s", address)
             return False
 
         if kind == PacketType.TIME_PING:
@@ -282,6 +310,13 @@ class PhoneImuReceiver:
                 self._pending.pop(0)
                 self._emit_locked(oldest, emitted)
         self._dispatch(emitted)
+
+    def _authorized(self, payload) -> bool:
+        """Return True unless a token is configured and the tag does not match."""
+        if not self._auth:
+            return True
+        supplied = getattr(payload, "auth", b"")
+        return hmac.compare_digest(supplied, self._auth)
 
     def _note_clock_candidate(self, candidate: float) -> None:
         if not math.isfinite(candidate):
@@ -410,6 +445,7 @@ class PhoneImuReceiver:
                 rate_hz=self._rate_hz,
                 samples=self._samples,
                 parse_errors=self._parse_errors,
+                auth_failures=self._auth_failures,
                 pings=self._pings,
                 last_accuracy=self._last_accuracy,
                 last_sequence=self._last_sequence or 0,
@@ -418,4 +454,5 @@ class PhoneImuReceiver:
                 clock_offset_ms=(self._clock_offset or 0.0) * 1000.0,
                 dropped_samples=self._dropped_samples,
                 buffered_samples=len(self._pending),
+                rate_limited=self._limiter.dropped,
             )

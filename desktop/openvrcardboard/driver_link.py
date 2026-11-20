@@ -20,6 +20,7 @@ import numpy as np
 
 from .fusion import ComposedFrame
 from .mathutil import normalize
+from .netutil import PacketRateLimiter
 from .protocol import (
     DeviceFlags,
     DevicePose,
@@ -49,6 +50,7 @@ class DriverLinkStats:
     status_packets: int = 0
     haptic_packets: int = 0
     parse_errors: int = 0
+    rate_limited: int = 0
     last_status: Optional[DriverStatus] = None
     last_status_time: float = 0.0
     last_haptic: Optional[HapticEvent] = None
@@ -99,6 +101,8 @@ class DriverLink:
 
         self._stats = DriverLinkStats()
         self._stats_lock = threading.Lock()
+        # The driver sends a few hundred packets per second at most.
+        self._limiter = PacketRateLimiter(rate_hz=2000.0)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -233,39 +237,51 @@ class DriverLink:
                 break
             if not readable:
                 continue
-            try:
-                data, address = self._socket.recvfrom(4096)
-            except BlockingIOError:
-                continue
-            except OSError as exc:
-                if self._stop.is_set():
+            for _ in range(32):
+                try:
+                    data, address = self._socket.recvfrom(4096)
+                except BlockingIOError:
                     break
-                # Linux reports ICMP port-unreachable on the next recv. The
-                # driver simply is not running yet.
-                LOGGER.debug("driver packet receive failed: %s", exc)
-                self._bump("receive_errors")
-                continue
+                except OSError as exc:
+                    if self._stop.is_set():
+                        break
+                    # Linux reports ICMP port-unreachable on the next recv.
+                    # The driver simply is not running yet.
+                    LOGGER.debug("driver packet receive failed: %s", exc)
+                    self._bump("receive_errors")
+                    break
+                if not self._limiter.allow(address, time.monotonic()):
+                    self._bump("rate_limited")
+                    continue
+                self._handle_datagram(data, address)
+                try:
+                    readable, _, _ = select.select([self._socket], [], [], 0.0)
+                except (OSError, ValueError):
+                    break
+                if not readable:
+                    break
 
-            try:
-                kind, payload = parse_packet(data)
-            except ProtocolError as exc:
-                LOGGER.debug("ignoring malformed driver packet from %s: %s", address, exc)
-                self._bump("parse_errors")
-                continue
+    def _handle_datagram(self, data: bytes, address) -> None:
+        try:
+            kind, payload = parse_packet(data)
+        except ProtocolError as exc:
+            LOGGER.debug("ignoring malformed driver packet from %s: %s", address, exc)
+            self._bump("parse_errors")
+            return
 
-            if kind == PacketType.STATUS:
-                with self._stats_lock:
-                    self._stats.status_packets += 1
-                    self._stats.last_status = payload
-                    self._stats.last_status_time = time.monotonic()
-                self._invoke(self.on_status, payload)
-            elif kind == PacketType.HAPTIC:
-                with self._stats_lock:
-                    self._stats.haptic_packets += 1
-                    self._stats.last_haptic = payload
-                self._invoke(self.on_haptic, payload)
-            else:
-                LOGGER.debug("ignoring unexpected packet type %s from driver", kind)
+        if kind == PacketType.STATUS:
+            with self._stats_lock:
+                self._stats.status_packets += 1
+                self._stats.last_status = payload
+                self._stats.last_status_time = time.monotonic()
+            self._invoke(self.on_status, payload)
+        elif kind == PacketType.HAPTIC:
+            with self._stats_lock:
+                self._stats.haptic_packets += 1
+                self._stats.last_haptic = payload
+            self._invoke(self.on_haptic, payload)
+        else:
+            LOGGER.debug("ignoring unexpected packet type %s from driver", kind)
 
     @staticmethod
     def _invoke(callback, payload) -> None:
@@ -295,6 +311,7 @@ class DriverLink:
                 status_packets=self._stats.status_packets,
                 haptic_packets=self._stats.haptic_packets,
                 parse_errors=self._stats.parse_errors,
+                rate_limited=self._stats.rate_limited,
                 last_status=self._stats.last_status,
                 last_status_time=self._stats.last_status_time,
                 last_haptic=self._stats.last_haptic,
