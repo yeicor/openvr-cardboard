@@ -539,6 +539,13 @@ def test_container_qt_ui_lifecycle():
     while config.phone.imu_port == config.driver.udp_port:
         config.phone.imu_port = free_udp_port()
 
+    def pump_until(predicate, timeout: float = 10.0) -> None:
+        deadline = time.monotonic() + timeout
+        while not predicate() and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        assert predicate()
+
     app = QApplication.instance() or QApplication([])
     runtime = Runtime(config)
     window = MainWindow(runtime, start_tracking=False)
@@ -546,16 +553,19 @@ def test_container_qt_ui_lifecycle():
         window.show()
         # Let the queued initial-start callback run, as it would on a real launch.
         app.processEvents()
+        pump_until(lambda: not window._busy)
         assert runtime.running
         assert not runtime.tracking.running
 
         window._start_clicked()
+        pump_until(lambda: not window._busy)
         assert runtime.tracking.running
         window._stop_clicked()
+        pump_until(lambda: not window._busy)
         assert runtime.running
         assert not runtime.tracking.running
     finally:
         window.close()
         app.processEvents()
 
-    assert not runtime.running
+    pump_until(lambda: not runtime.running)

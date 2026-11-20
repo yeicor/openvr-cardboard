@@ -421,4 +421,3 @@ def validate_config(config: AppConfig) -> list[str]:
     cfg.ui.preview_width = int(_clamp(cfg.ui.preview_width, 240, 1920, int))
     cfg.ui.preview_fps = int(_clamp(cfg.ui.preview_fps, 1, 60, int))
     return warnings
-
