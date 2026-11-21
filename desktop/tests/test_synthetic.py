@@ -17,6 +17,8 @@ if not hasattr(cv2, "aruco"):
 from openvrcardboard.synthetic import (  # noqa: E402
     SYNTHETIC_BOARD_NAMES,
     SYNTHETIC_HORIZONTAL_FOV_DEG,
+    SYNTHETIC_LOOP_S,
+    SyntheticClip,
     SyntheticScene,
 )
 
@@ -143,3 +145,43 @@ def test_synthetic_camera_model_ignores_calibration_file(tmp_path):
     assert model.fy == pytest.approx(expected.fy)
     assert model.cx == pytest.approx(expected.cx)
     assert model.cy == pytest.approx(expected.cy)
+
+
+def test_synthetic_scene_motion_repeats_after_one_loop(scene):
+    first = scene.render(0.0)
+    looped = scene.render(SYNTHETIC_LOOP_S)
+    assert np.array_equal(first, looped)
+    joints = scene.body_joints(0.0)
+    looped_joints = scene.body_joints(SYNTHETIC_LOOP_S)
+    assert set(joints) == set(looped_joints)
+    for name in joints:
+        assert np.allclose(joints[name], looped_joints[name])
+
+
+def test_synthetic_joints_and_boards_move_more_than_before(scene):
+    start = scene.body_joints(0.0)
+    later = scene.body_joints(1.05)
+    assert np.linalg.norm(later["left_wrist"] - start["left_wrist"]) > 0.12
+    assert np.linalg.norm(later["right_wrist"] - start["right_wrist"]) > 0.12
+    assert np.linalg.norm(later["left_knee"] - start["left_knee"]) > 0.03
+
+    first_poses = scene.object_poses(0.0)
+    later_poses = scene.object_poses(1.05)
+    for name in SYNTHETIC_BOARD_NAMES:
+        rotation_change = math.degrees(
+            angle_between(first_poses[name][1], later_poses[name][1])
+        )
+        assert rotation_change > 8.0
+
+
+def test_synthetic_clip_caches_frames_and_loops(scene):
+    clip = SyntheticClip(scene, fps=10, quality=92, max_frames=100)
+    assert clip.loop_frames == int(round(10 * SYNTHETIC_LOOP_S))
+    first = clip.render(0.0)
+    assert clip.cached_frames == 1
+    repeated = clip.render(SYNTHETIC_LOOP_S)
+    assert clip.cached_frames == 1
+    assert repeated.shape == first.shape
+    assert np.abs(repeated.astype(np.int16) - first.astype(np.int16)).mean() < 4.0
+    clip.clear()
+    assert clip.cached_frames == 0

@@ -499,13 +499,17 @@ class MainWindow(QMainWindow):
         if camera["error"]:
             self._set_status("camera", camera["error"], "bad")
         elif camera["opened"]:
+            source = camera.get("source") or "webcam"
             detail = (
-                f"{camera['fps']:.1f} fps · {camera['width']}×{camera['height']}"
-                f" · {camera['frame_ms']:.1f} ms"
+                f"{source} · {camera['fps']:.1f} fps · "
+                f"{camera['width']}×{camera['height']} · {camera['frame_ms']:.1f} ms"
             )
             fourcc = camera.get("fourcc") or ""
             if fourcc:
                 detail += f" · {fourcc}"
+            dropped = camera.get("dropped_frames", 0)
+            if dropped:
+                detail += f" · dropped {dropped}"
             if not camera.get("mode_ok", True):
                 requested = (
                     f"{camera.get('requested_width', '?')}×"

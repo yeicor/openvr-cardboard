@@ -1,6 +1,7 @@
 # Android phone app
 
-The Android app turns a phone into a wireless SteamVR headset:
+The Android app turns a phone into a wireless SteamVR headset or a phone
+camera for the desktop:
 
 - streams the rotation-vector, gyroscope and linear-acceleration sensors over
   UDP (default port `39101`),
@@ -9,10 +10,14 @@ The Android app turns a phone into a wireless SteamVR headset:
   H.264/HEVC/AV1 are decoded by MediaCodec straight onto a display surface;
   JPEG remains the universal fallback with quality 65,
 - reports the current display rotation so the desktop can compensate when the
-  phone is turned 180° in its holder.
+  phone is turned 180° in its holder,
+- in **Camera** mode, uploads the rear camera as H.264 to the desktop's
+  tracking-camera socket (default port `8766`), targeting 1280×720 at up to
+  120 FPS.
 
 It is intentionally small: no analytics, no background service, no Google
-account. The phone must stay on the same network as the desktop while in use.
+account. The phone must stay on the same network as the desktop while in use;
+USB tethering with internet sharing is the recommended link.
 
 ## Requirements
 
@@ -21,8 +26,9 @@ account. The phone must stay on the same network as the desktop while in use.
 - Android Studio (recommended) or a command-line Android SDK with:
   - Android SDK Platform 37.0 and Build-Tools 37.0.0,
   - JDK 17.
-- Wi-Fi with the phone and desktop on the same subnet. 5 GHz is strongly
-  recommended because the video stream is bandwidth-heavy.
+- Wi-Fi with the phone and desktop on the same subnet, or USB tethering with
+  internet sharing. 5 GHz or USB is strongly recommended because the video
+  stream is bandwidth-heavy.
 
 The project uses Android Gradle Plugin 9.5.1, Gradle 9.9.1 and AGP 9's built-in
 Kotlin support, so there is no separate `org.jetbrains.kotlin.android` plugin to
@@ -117,11 +123,13 @@ Start the desktop app before the phone app. The status panel shows both
 
 | Field | Default | Notes |
 | --- | --- | --- |
+| Mode | Headset | **Headset** displays stereo video; **Camera** uploads the rear camera |
 | Desktop IP | empty | e.g. `192.168.1.20`; a port may be included |
 | IMU port | `39101` | must match `phone.imu_port` on the desktop |
 | Video port | `8765` | must match `phone.video_port` |
+| Camera port | `8766` | shown in Camera mode; must match `phone.camera_port` |
 | Sensor Hz | `120` | requested sensor period, 10–400 |
-| Pairing token | empty | must match `phone.token` if one is set; authenticates IMU, clock pings and the video socket |
+| Pairing token | empty | must match `phone.token` if one is set; authenticates IMU, clock pings, the video socket and the camera socket |
 
 Tap **Start**. The app:
 
@@ -156,6 +164,41 @@ can be checked against the panel's actual refresh rate. Smaller per-eye sizes,
 a lower JPEG quality or a hardware codec are the first controls if the phone
 cannot keep up.
 
+## Camera mode
+
+Choose **Camera** in the mode selector, confirm the desktop IP, camera port and
+token, then press **Start**. The app requests the camera permission on first
+use, opens the rear camera and connects to
+`ws://<desktop>:<camera-port>/camera?token=…`. It targets 1280×720, picks the
+highest rate up to 120 FPS that both the camera and the H.264 encoder support,
+and uses a Camera2 constrained high-speed session when the device only exposes
+120 FPS there. The desktop's `camera_welcome` bitrate overrides the local
+default, so quality can be tuned from the desktop settings without editing the
+phone.
+
+The encoder runs in CBR (falling back to VBR if the encoder rejects CBR), keeps
+one keyframe per second and sends Annex-B access units. Only the newest frames
+are queued; when the socket falls behind, the queue is cleared and the app asks
+the encoder for a keyframe so the desktop decoder never receives a broken
+reference chain. The status line shows the selected resolution, frame rate,
+bitrate and sensor rotation.
+
+Camera mode reuses the same host, token and preferences as headset mode. The
+desktop keeps its local camera open and switches to the phone automatically
+while fresh frames arrive. Stop the stream on the phone, or switch back to
+**Headset**, to make the desktop fall back to its local camera.
+
+The phone reports an approximate horizontal FOV from its focal length and
+sensor size. Keep the phone near the webcam's position and orientation; the
+configured `camera.position` and `camera.rotation` still define where the
+tracking camera sits in play space.
+
+For 720p120, use USB tethering with **USB tethering internet sharing** enabled
+and enter the tether adapter's desktop address. Raise
+`phone.camera_bitrate_mbps` (desktop **Settings → Phone**) to 60–80 Mbps when
+the wired link allows it; 40 Mbps is the default. The headset stream has its
+own `phone.bitrate_mbps` setting.
+
 The settings panel hides 1.5 seconds after a clean start. Tap the video to show
 it again; tap once more to hide it. The hardware back button stops streaming
 and returns to the settings panel. A second back press leaves the app.
@@ -173,8 +216,10 @@ by a phone automation script:
 | Extra | Type | Effect |
 | --- | --- | --- |
 | `host` | string | Desktop address or WebSocket base URL |
+| `mode` | string | `headset` (default) or `webcam` |
 | `imu_port` | int | IMU UDP port |
 | `video_port` | int | Video WebSocket port |
+| `camera_port` | int | Phone camera WebSocket port |
 | `sensor_hz` | int | Requested sensor rate, 10–400 |
 | `token` | string | Pairing token |
 | `autostart` | boolean | Start streaming 600 ms after the activity opens |
@@ -185,6 +230,14 @@ Values are saved to shared preferences before autostart. Example:
 adb shell am start -S -n dev.openvrcardboard.phone/.MainActivity \
   --es host 192.168.1.20 --ei imu_port 39101 --ei video_port 8765 \
   --ei sensor_hz 60 --es token my-token --ez autostart true
+```
+
+Camera mode from an automation script:
+
+```bash
+adb shell am start -S -n dev.openvrcardboard.phone/.MainActivity \
+  --es mode webcam --es host 192.168.42.1 --ei camera_port 8766 \
+  --es token my-token --ez autostart true
 ```
 
 Logcat uses the tag `OpenVRCardboard`. A healthy session logs the IMU setup,
@@ -228,10 +281,11 @@ connects but no frame appears, check TCP `8765` and the selected capture source.
   streams share one sensor clock. The desktop estimates the phone-to-desktop
   offset and reorders one sample before rejecting stale or duplicate data; the
   `TIME_PING` exchange remains available for diagnostics and offset candidates.
-- The APK requests no camera, microphone, location or storage permissions. It
-  declares `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE` and
-  `WAKE_LOCK` so it can reach the desktop, report network changes and keep the
-  display on while streaming.
+- The APK requests `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`,
+  `CAMERA` and `WAKE_LOCK`. The camera permission is requested only when you
+  start **Camera** mode; the app does not request microphone, location or
+  storage permissions. Camera frames are uploaded only after you press Start
+  and are not recorded by the app.
 
 ## Troubleshooting
 
@@ -243,5 +297,8 @@ connects but no frame appears, check TCP `8765` and the selected capture source.
 | Video shows but is very dark | headset brightness / capture source; check the test pattern first |
 | Tracking drifts sideways | phone IMU is orientation-only; add a marker or recenter |
 | View is rotated | current display rotation is sent live; make sure the phone is not locked in a fixed orientation |
+| Camera mode says permission denied | grant the camera permission in Android app settings, then Start again |
+| Camera stream connects but the desktop still uses the local camera | check TCP `8766`, token, Camera mode selected; the desktop falls back after `phone.camera_timeout_s` without fresh frames |
+| Camera mode drops frames | use USB tethering, lower `phone.camera_bitrate_mbps`, or accept a lower camera frame rate; check `frames_skipped` in the desktop status |
 | Decode/display FPS below 90 | lower `phone.width`/`height`, lower `jpeg_quality`, use 5 GHz Wi-Fi, check that the panel actually offers a 90 Hz mode, and let `phone.codec=auto` use the hardware decoder |
 | `Switching to JPEG` message | the phone has no decoder for the negotiated codec or its decoder rejected the stream; this is expected on older devices and reduces bandwidth/quality rather than breaking video |

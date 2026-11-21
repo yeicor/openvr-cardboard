@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "desktop"))
 
+from openvrcardboard.phone_camera import pack_camera_frame  # noqa: E402
 from openvrcardboard.protocol import (  # noqa: E402
     Buttons,
     ControllerInput,
@@ -88,6 +89,14 @@ def vectors() -> dict[str, bytes]:
         ),
         "time_ping": pack_time_ping(9, 55.125),
         "time_ping_auth": pack_time_ping(9, 55.125, token=TOKEN),
+        "camera_frame": pack_camera_frame(
+            13,
+            12.5,
+            1280,
+            720,
+            b"\x00\x00\x00\x01\x65\x88",
+            keyframe=True,
+        ),
     }
 
 
@@ -99,7 +108,9 @@ def render() -> str:
         "#        left controller input (trigger 0.75, A); haptic: 7/left/0.8/120/0.05;",
         "#        status: 8, 5 devices, 1000 ms, 321 packets, 2 parse errors;",
         "#        imu: sequence 0x01020304, timestamp 1234.5, accuracy 3, rotation 2;",
-        "#        time_ping: sequence 9, client time 55.125.",
+        "#        time_ping: sequence 9, client time 55.125;",
+        "#        camera_frame: sequence 13, timestamp 12.5, 1280x720, keyframe,"
+        " Annex-B payload 000000016588.",
         "# _auth variants append SHA-256(test-token)[:16].",
     ]
     for name, packet in vectors().items():

@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import openvrcardboard.runtime as runtime_module
+from openvrcardboard.camera import CameraRouter
 from openvrcardboard.config import AppConfig, load_config, save_config
 from openvrcardboard.markers import MarkerDetection
 from openvrcardboard.mathutil import IDENTITY
@@ -18,6 +19,7 @@ def make_config() -> AppConfig:
     config.driver.udp_port = 39400
     config.phone.imu_port = 39401
     config.phone.video_enabled = False
+    config.phone.camera_enabled = False
     config.gamepad.enabled = False
     config.openxr.enabled = False
     config.ui.start_tracking_on_launch = False
@@ -53,6 +55,58 @@ def test_runtime_falls_back_to_estimated_camera_model(tmp_path):
         assert runtime.model.width == 1920
         assert runtime.model.height == 1080
         assert any("calibration" in note for note in runtime.warnings)
+    finally:
+        runtime.stop()
+
+
+class FakePhoneCamera:
+    def __init__(self, config):
+        self.config = config
+        self.running = False
+        self.local_port = config.camera_port
+        self.starts = 0
+
+    def start(self):
+        self.running = True
+        self.starts += 1
+
+    def stop(self):
+        self.running = False
+
+    def status(self):
+        return {
+            "enabled": True,
+            "running": self.running,
+            "connected": False,
+            "port": self.local_port,
+        }
+
+
+def test_runtime_starts_phone_camera_and_routes_tracking(monkeypatch):
+    monkeypatch.setattr(runtime_module, "PhoneCameraReceiver", FakePhoneCamera)
+    config = make_config()
+    config.phone.camera_enabled = True
+    config.phone.camera_port = 39402
+    runtime = Runtime(config)
+    try:
+        assert isinstance(runtime.phone_camera, FakePhoneCamera)
+        assert isinstance(runtime.tracking.camera, CameraRouter)
+        assert runtime.tracking.camera.phone is runtime.phone_camera
+        problems = runtime.start(start_tracking=False)
+        assert problems == []
+        assert runtime.phone_camera.starts == 1
+        assert runtime.phone_camera.running
+        assert runtime.tracking_status()["phone_camera"]["running"] is True
+    finally:
+        runtime.stop()
+    assert not runtime.phone_camera.running
+
+
+def test_runtime_uses_local_camera_when_phone_camera_is_disabled():
+    runtime = Runtime(make_config())
+    try:
+        assert runtime.tracking.camera is runtime.tracking.base_camera
+        assert runtime.tracking.phone_camera is None
     finally:
         runtime.stop()
 

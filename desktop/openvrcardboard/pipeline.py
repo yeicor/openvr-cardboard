@@ -16,7 +16,7 @@ import numpy as np
 
 from .boards import boards_from_config
 from .calibration import CameraModel
-from .camera import CameraCapture
+from .camera import CameraCapture, CameraRouter
 from .config import AppConfig
 from .driver_link import DriverLink
 from .fusion import ComposedFrame, PhonePoseEstimator, PoseComposer
@@ -82,7 +82,7 @@ class _InferenceWorker:
         self.body = body
         self.inference_ms = 0.0
         self._lock = threading.Lock()
-        self._job: Optional[tuple[np.ndarray, float]] = None
+        self._job: Optional[tuple[np.ndarray, float, Optional[CameraModel]]] = None
         self._results: Optional[tuple[float, dict, object]] = None
         self._ready = threading.Event()
         self._stop = threading.Event()
@@ -104,9 +104,14 @@ class _InferenceWorker:
             self._thread.join(timeout=2.0)
             self._thread = None
 
-    def submit(self, image: np.ndarray, timestamp: float) -> None:
+    def submit(
+        self,
+        image: np.ndarray,
+        timestamp: float,
+        model: Optional[CameraModel] = None,
+    ) -> None:
         with self._lock:
-            self._job = (image, float(timestamp))
+            self._job = (image, float(timestamp), model)
         self._ready.set()
 
     def latest(self) -> Optional[tuple[float, dict, object]]:
@@ -124,7 +129,16 @@ class _InferenceWorker:
                 self._job = None
             if job is None:
                 continue
-            image, timestamp = job
+            image, timestamp, model = job
+            if model is not None:
+                # Marker detection and MediaPipe must use the intrinsics of
+                # the camera that produced this frame.  The router can switch
+                # between the local webcam and the phone without restarting
+                # the trackers.
+                if self.hands is not None:
+                    self.hands.model = model
+                if self.body is not None:
+                    self.body.model = model
             started = time.perf_counter()
             hands: dict = {}
             body = None
@@ -174,6 +188,7 @@ class TrackingWorker:
         camera_position,
         camera_rotation,
         camera: Optional[CameraCapture] = None,
+        phone_camera=None,
     ):
         self.state = state
         self.config = config
@@ -181,7 +196,7 @@ class TrackingWorker:
         self.camera_position = np.asarray(camera_position, dtype=np.float64).reshape(3)
         self.camera_rotation = np.asarray(camera_rotation, dtype=np.float64).reshape(4)
         self.boards = boards_from_config(config.tracking)
-        self.camera = camera or CameraCapture(
+        base_camera = camera or CameraCapture(
             config.camera,
             marker_ids=(
                 config.tracking.hmd_marker_id,
@@ -190,6 +205,20 @@ class TrackingWorker:
             ),
             boards=self.boards,
         )
+        self.base_camera = base_camera
+        self.phone_camera = phone_camera
+        self.camera = (
+            CameraRouter(
+                base_camera,
+                phone_camera,
+                timeout_s=float(getattr(config.phone, "camera_timeout_s", 0.5)),
+            )
+            if phone_camera is not None
+            else base_camera
+        )
+        self.frames_processed = 0
+        self.frames_skipped = 0
+        self._frame_models: dict[tuple[str, int, int, float], CameraModel] = {}
 
         self.markers: Optional[BoardTracker] = None
         self.hands: Optional[HandTracker] = None
@@ -342,24 +371,69 @@ class TrackingWorker:
     # ------------------------------------------------------------------
     # Main loop
     # ------------------------------------------------------------------
+    def _camera_model(self, frame) -> CameraModel:
+        """Pick intrinsics for the source that produced ``frame``.
+
+        A phone reports its horizontal FOV during the camera handshake.  Build
+        a pinhole model at the streamed resolution so marker PnP and body
+        scaling do not inherit the local webcam's calibration.  Without a
+        report we keep the configured model, which is already scaled to the
+        frame size by the trackers.
+        """
+        if frame.source == "phone" and self.phone_camera is not None:
+            try:
+                fov = float(self.phone_camera.horizontal_fov())
+            except (AttributeError, TypeError, ValueError):
+                fov = 0.0
+            if 10.0 <= fov <= 150.0:
+                key = (
+                    "phone",
+                    int(frame.width),
+                    int(frame.height),
+                    round(fov, 3),
+                )
+                model = self._frame_models.get(key)
+                if model is None:
+                    model = CameraModel.estimate(
+                        frame.width, frame.height, fov
+                    )
+                    self._frame_models[key] = model
+                return model
+        return self.model
+
     def _loop(self) -> None:
         last_sequence = -1
+        last_source = ""
+        preview_interval = 1.0 / max(
+            1, int(getattr(self.config.ui, "preview_fps", 30))
+        )
+        next_preview = 0.0
         while not self._stop.is_set():
             frame = self.camera.latest()
             if frame is None:
                 self._stop.wait(0.01)
                 continue
-            if frame.sequence == last_sequence:
+            # The router changes sources without restarting this worker. Its
+            # sequence counters are independent, so a switch is not a gap.
+            if frame.source != last_source:
+                last_source = frame.source
+                last_sequence = frame.sequence
+            elif frame.sequence == last_sequence:
                 self._stop.wait(0.002)
                 continue
+            elif frame.sequence > last_sequence:
+                self.frames_skipped += frame.sequence - last_sequence - 1
             last_sequence = frame.sequence
+            self.frames_processed += 1
 
             started = time.perf_counter()
             image = frame.image
             timestamp = frame.timestamp
+            model = self._camera_model(frame)
             detections = {}
 
             if self.markers is not None:
+                self.markers.model = model
                 try:
                     detections = self.markers.detect(image, timestamp)
                     self.state.set_markers(detections, timestamp)
@@ -381,7 +455,7 @@ class TrackingWorker:
                 except Exception as exc:  # keep tracking alive across OpenCV hiccups
                     LOGGER.debug("marker tracking failed: %s", exc)
             if self.inference is not None:
-                self.inference.submit(image, timestamp)
+                self.inference.submit(image, timestamp, model)
             results = self.inference.latest() if self.inference is not None else None
             hands = {}
             body = None
@@ -392,23 +466,30 @@ class TrackingWorker:
                 self.inference.inference_ms if self.inference is not None else 0.0
             )
 
-            overlay = image.copy()
-            if self.markers is not None and detections:
-                try:
-                    self.markers.draw(overlay, detections)
-                except Exception:
-                    pass
-            if self.hands is not None and hands:
-                try:
-                    self.hands.draw(overlay, hands)
-                except Exception:
-                    pass
-            if self.body is not None and body is not None:
-                try:
-                    self.body.draw(overlay, body)
-                except Exception:
-                    pass
-            self.state.set_preview(overlay, timestamp)
+            # Drawing and publishing a 720p preview at 120 Hz costs more than
+            # marker detection. The UI only refreshes at ``preview_fps``, so
+            # build the annotated copy at that rate and leave the captured
+            # image untouched otherwise.
+            now = time.monotonic()
+            if now >= next_preview:
+                next_preview = now + preview_interval
+                overlay = image.copy()
+                if self.markers is not None and detections:
+                    try:
+                        self.markers.draw(overlay, detections)
+                    except Exception:
+                        pass
+                if self.hands is not None and hands:
+                    try:
+                        self.hands.draw(overlay, hands)
+                    except Exception:
+                        pass
+                if self.body is not None and body is not None:
+                    try:
+                        self.body.draw(overlay, body)
+                    except Exception:
+                        pass
+                self.state.set_preview(overlay, timestamp)
 
             stats = self.camera.stats()
             self.state.set_status(

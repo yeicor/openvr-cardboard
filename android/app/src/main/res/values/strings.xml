@@ -6,5 +6,9 @@
     <string name="start">Start</string>
     <string name="stop">Stop</string>
     <string name="settings">Connection</string>
-    <string name="help">Start the desktop app first, then enter its LAN address. The phone streams IMU at sensor rate and displays the JPEG stereo view.</string>
+    <string name="mode_headset">Headset</string>
+    <string name="mode_webcam">Camera</string>
+    <string name="camera_port_hint">Desktop camera WebSocket port</string>
+    <string name="help">Start the desktop app first, then enter its LAN address. The phone streams IMU at sensor rate and displays the stereo view.</string>
+    <string name="help_webcam">Camera mode sends the rear camera to the desktop over Wi-Fi. The desktop uses it as the tracking camera while connected and returns to its local camera when you stop.</string>
 </resources>

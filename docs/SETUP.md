@@ -59,7 +59,7 @@ If you use a portable package, skip steps 1–3 and continue with the markers.
 | Build tools | CMake 3.16+, a C++17 compiler, Ninja or Visual Studio 2022 |
 | Webcam | 720p/60 or 1080p/60, manual exposure recommended |
 | Gamepads | Two Xbox-style pads for two-handed controller emulation |
-| Phone | Android 8.0+, same Wi-Fi as the PC, rotation-vector sensor |
+| Phone | Android 8.0+, rotation-vector sensor, same Wi-Fi or USB tethering |
 
 Linux packages (Debian/Ubuntu names):
 
@@ -446,6 +446,38 @@ board (IDs 0–4) on the holder facing the camera, and recenter after putting it
 on. The desktop uses the board for position and the phone IMU for fast
 rotation.
 
+### Phone as the tracking camera
+
+Camera mode in the Android app sends the rear camera to the desktop, so the
+phone can replace the webcam while it is connected. In the app choose
+**Camera** instead of **Headset**, set the same host, token and camera port
+(default `8766`), and press **Start**. The desktop keeps its local camera
+running; while fresh phone frames arrive (within `phone.camera_timeout_s`,
+default 0.5 s) the tracking loop uses them, and it returns to the local camera
+as soon as the phone stops. No desktop restart or extra pairing step is
+needed.
+
+The phone targets 1280×720 at up to 120 FPS, using Camera2 constrained
+high-speed capture when the device exposes it. Quality is the priority:
+`phone.camera_bitrate_mbps` (default 40 Mbps) controls the phone upload, and
+`phone.bitrate_mbps` (default 40 Mbps) controls the desktop-to-phone headset
+stream. Raise either on USB tethering or a clean 5 GHz link. The phone reports
+its horizontal FOV during the handshake so marker PnP uses the phone's
+intrinsics; mount the phone close to where the webcam was, because the
+configured camera position and rotation still define the play-space origin.
+The desktop decodes the upload with ffmpeg (ffmpeg 5.1 or newer); the `[all]`
+install and the portable packages include it, and camera mode falls back to the
+local webcam if ffmpeg is missing.
+
+USB tethering is the recommended link for camera mode and for 720p120. Connect
+the phone by USB, enable **USB tethering** and **USB tethering internet
+sharing** on the phone, and use the tether interface's desktop address in the
+app. It avoids Wi-Fi jitter and has ample bandwidth for the 40–80 Mbps camera
+upload plus the headset stream. On Linux, `ip addr` shows the tether interface
+(usually `usb0` or `enp0s20u1`); on Windows it appears as a new Ethernet
+adapter. Keep the phone on the same subnet as that adapter, or use the address
+the DHCP server hands to the desktop.
+
 ## 8. Configuration reference
 
 Most fields are editable in the UI. The JSON file uses the same names grouped
@@ -494,6 +526,7 @@ older single-marker or body-marker settings.
 | | `pose_max_age_s 0.25`, `body_scale 1.0` | Freshness and body scaling |
 | | `manual_hmd_position [0,1.65,0]`, `controller_offset_*` | Fallback poses |
 | `phone` | `imu_port 39101`, `video_port 8765`, `token ""` | Phone link |
+| | `camera_enabled true`, `camera_port 8766`, `camera_bitrate_mbps 40`, `camera_timeout_s 0.5` | Phone-as-webcam receiver, upload budget and local-camera fallback |
 | | `layout sbs`, `width 1200`, `height 1080` | Per-eye size; 2400×1080 side-by-side |
 | | `fps 90`, `codec auto`, `encoder auto`, `bitrate_mbps 40`, `keyframe_interval_s 1.0` | Video budget and NVENC/CPU encoder choice |
 | | `jpeg_quality 65` | JPEG fallback and non-GPU machines |
@@ -623,6 +656,7 @@ manual.
 | Gamepad not detected | pygame installed? Correct index? `/dev/input` permissions? Reconnect pad and wait 2 s. |
 | Phone IMU not seen | PC IP, UDP `39101`, firewall, AP isolation, phone on same subnet. |
 | Phone video not seen | TCP `8765`, token mismatch, server started, capture source/test pattern. |
+| Phone camera not used | TCP `8766`, token mismatch, **Camera** mode selected, phone camera permission granted, firewall allows the tether/Wi-Fi interface. |
 | Video lag | Use 5 GHz, lower `phone.fps`, `width/height` and JPEG quality. |
 | Virtual HMD conflicts with a real headset | Disable `driver.enable_virtual_hmd`. |
 | SteamVR crashes after install | Remove `drivers/openvrcardboard`, restore the backup, and check that the driver architecture matches SteamVR (64-bit). |

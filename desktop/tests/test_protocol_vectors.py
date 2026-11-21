@@ -5,10 +5,12 @@ and the Kotlin app test. If this test fails after an intentional wire change,
 regenerate the file with ``scripts/generate_protocol_vectors.py``.
 """
 
+import struct
 from pathlib import Path
 
 import pytest
 
+from openvrcardboard.phone_camera import pack_camera_frame
 from openvrcardboard.protocol import (
     Buttons,
     ControllerInput,
@@ -135,3 +137,15 @@ def test_time_ping_vectors_match_python_encoder_and_authenticator():
     assert parsed.sequence == 9
     assert parsed.client_time == pytest.approx(55.125)
     assert parsed.auth == VECTORS["time_ping_auth"][-16:]
+
+
+def test_camera_frame_vector_matches_python_and_kotlin_encoder():
+    payload = b"\x00\x00\x00\x01\x65\x88"
+    packet = pack_camera_frame(13, 12.5, 1280, 720, payload, keyframe=True)
+    assert packet == VECTORS["camera_frame"]
+    assert packet[6:8] == b"\x01\x00"
+    assert packet[8:12] == (13).to_bytes(4, "little")
+    assert packet[12:20] == struct.pack("<d", 12.5)
+    assert packet[20:24] == (1280).to_bytes(4, "little")
+    assert packet[24:28] == (720).to_bytes(4, "little")
+    assert packet[28:] == payload

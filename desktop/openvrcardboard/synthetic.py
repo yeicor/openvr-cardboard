@@ -36,6 +36,17 @@ SYNTHETIC_CAMERA_ROTATION = (0.0, 1.0, 0.0, 0.0)
 SYNTHETIC_HORIZONTAL_FOV_DEG = 65.0
 SYNTHETIC_DICTIONARY = CUSTOM_DICTIONARY_3X3
 SYNTHETIC_BOARD_NAMES = ("hmd", "left", "right")
+# Every animated term is an integer harmonic of this period, so the motion
+# (and therefore a cached clip) loops without a visible jump.
+SYNTHETIC_LOOP_S = 6.0
+
+
+def _phase(elapsed: float) -> float:
+    return 2.0 * math.pi * ((float(elapsed) % SYNTHETIC_LOOP_S) / SYNTHETIC_LOOP_S)
+
+
+def _sin(elapsed: float, harmonic: int, offset: float = 0.0) -> float:
+    return math.sin(harmonic * _phase(elapsed) + offset)
 
 
 class SyntheticError(RuntimeError):
@@ -287,43 +298,130 @@ class SyntheticScene:
     # ------------------------------------------------------------------
     # Scene motion
     # ------------------------------------------------------------------
+    def body_joints(self, elapsed: float) -> dict[str, np.ndarray]:
+        """Return an articulated human skeleton in play space.
+
+        The figure walks, bends its elbows and knees, and turns its torso.
+        Every term is a harmonic of :data:`SYNTHETIC_LOOP_S`, so tests can
+        render exactly the same frame after one loop.
+        """
+        t = float(elapsed)
+        sway = 0.10 * _sin(t, 1)
+        depth = 0.06 * _sin(t, 1, math.pi / 2.0)
+        bob = 0.030 * _sin(t, 3)
+        root = np.array([sway, 0.0, depth])
+        yaw = 0.22 * _sin(t, 2, 0.3)
+        cos_yaw = math.cos(yaw)
+        sin_yaw = math.sin(yaw)
+
+        def body_point(x: float, y: float, z: float) -> np.ndarray:
+            # Rotate the upper body around its vertical axis and then move it
+            # with the root sway.
+            return root + np.array(
+                [cos_yaw * x + sin_yaw * z, y, -sin_yaw * x + cos_yaw * z]
+            )
+
+        head = body_point(0.0, 1.42 + bob, 0.0)
+        neck = body_point(0.0, 1.27 + bob, 0.0)
+        left_shoulder = body_point(-0.20, 1.25 + bob, 0.02)
+        right_shoulder = body_point(0.20, 1.25 + bob, 0.02)
+        left_elbow = body_point(
+            -0.32,
+            1.06 + bob + 0.05 * _sin(t, 2),
+            -0.20 + 0.06 * _sin(t, 2, math.pi),
+        )
+        right_elbow = body_point(
+            0.32,
+            1.06 + bob - 0.05 * _sin(t, 2),
+            -0.20 - 0.06 * _sin(t, 2, math.pi),
+        )
+        left_wrist = body_point(
+            -0.28 + 0.05 * _sin(t, 3),
+            1.17 + bob + 0.11 * _sin(t, 2, math.pi / 2.0),
+            -0.60 + 0.08 * _sin(t, 2),
+        )
+        right_wrist = body_point(
+            0.28 - 0.05 * _sin(t, 3, 0.7),
+            1.17 + bob - 0.11 * _sin(t, 2, math.pi / 2.0),
+            -0.60 - 0.08 * _sin(t, 2, 0.7),
+        )
+        left_hip = body_point(-0.11, 0.88, 0.0)
+        right_hip = body_point(0.11, 0.88, 0.0)
+        left_knee = body_point(
+            -0.14 - 0.03 * _sin(t, 2),
+            0.47 + 0.03 * _sin(t, 1, math.pi / 2.0),
+            0.03 + 0.08 * _sin(t, 2, math.pi),
+        )
+        right_knee = body_point(
+            0.14 + 0.03 * _sin(t, 2, math.pi),
+            0.47 - 0.03 * _sin(t, 1, math.pi / 2.0),
+            0.03 - 0.08 * _sin(t, 2),
+        )
+        left_ankle = body_point(
+            -0.15 - 0.12 * _sin(t, 1),
+            0.08 + 0.04 * abs(_sin(t, 1)),
+            0.02 + 0.05 * _sin(t, 1, math.pi / 2.0),
+        )
+        right_ankle = body_point(
+            0.15 + 0.12 * _sin(t, 1, math.pi),
+            0.08 - 0.04 * abs(_sin(t, 1)),
+            0.02 - 0.05 * _sin(t, 1, math.pi / 2.0),
+        )
+        return {
+            "head": head,
+            "neck": neck,
+            "left_shoulder": left_shoulder,
+            "right_shoulder": right_shoulder,
+            "left_elbow": left_elbow,
+            "right_elbow": right_elbow,
+            "left_wrist": left_wrist,
+            "right_wrist": right_wrist,
+            "left_hip": left_hip,
+            "right_hip": right_hip,
+            "left_knee": left_knee,
+            "right_knee": right_knee,
+            "left_ankle": left_ankle,
+            "right_ankle": right_ankle,
+        }
+
     def object_poses(self, elapsed: float) -> dict[str, tuple[np.ndarray, np.ndarray]]:
         """Return the HMD and hand object poses in play space for one frame."""
         t = float(elapsed)
+        joints = self.body_joints(t)
+        torso = _pose_rotation(0.22 * _sin(t, 2, 0.3))
+        head = joints["head"]
+        left_wrist = joints["left_wrist"]
+        right_wrist = joints["right_wrist"]
+
+        def offset(value) -> np.ndarray:
+            return rotate(torso, np.asarray(value, dtype=np.float64))
+
         # Keep every board inside a 65-degree 720p view at its real distance:
         # hands sit about 1.0 m from the lens and the HMD about 1.5 m, so the
         # lateral excursion has to stay below roughly half a metre.
-        sway = 0.07 * math.sin(0.75 * t)
-        depth = 0.05 * math.sin(0.45 * t)
-        bob = 0.016 * math.sin(2.2 * t)
-        root = np.array([sway, 0.0, depth])
-        head = np.array([0.0, 1.42 + bob, 0.0]) + root
-        wave = math.sin(1.7 * t)
-        left_wrist = np.array([-0.28, 1.18 + 0.08 * wave + bob, -0.58]) + root
-        right_wrist = np.array([0.28, 1.16 - 0.07 * wave + bob, -0.56]) + root
         return {
             "hmd": (
-                head + np.array([0.0, 0.20, -0.06]),
+                head + offset((0.0, 0.20, -0.06)),
                 _pose_rotation(
-                    0.30 * math.sin(0.8 * t),
-                    0.08 * math.sin(1.3 * t),
-                    0.12 * math.sin(0.6 * t + 1.0),
+                    0.55 * _sin(t, 1),
+                    0.20 * _sin(t, 2),
+                    0.24 * _sin(t, 3, 0.7),
                 ),
             ),
             "left": (
-                left_wrist + np.array([-0.18, 0.06, -0.06]),
+                left_wrist + offset((-0.18, 0.06, -0.06)),
                 _pose_rotation(
-                    0.30 * math.sin(1.7 * t),
-                    0.12 * math.sin(2.0 * t),
-                    0.35 * math.sin(1.1 * t),
+                    0.55 * _sin(t, 2),
+                    0.25 * _sin(t, 3, 0.4),
+                    0.75 * _sin(t, 1, 0.2),
                 ),
             ),
             "right": (
-                right_wrist + np.array([0.18, 0.06, -0.06]),
+                right_wrist + offset((0.18, 0.06, -0.06)),
                 _pose_rotation(
-                    -0.30 * math.sin(1.5 * t + 0.7),
-                    0.12 * math.sin(1.9 * t + 1.2),
-                    -0.35 * math.sin(1.2 * t),
+                    -0.55 * _sin(t, 2, 0.7),
+                    0.25 * _sin(t, 3, 1.1),
+                    -0.75 * _sin(t, 1, 0.6),
                 ),
             ),
         }
@@ -394,25 +492,21 @@ class SyntheticScene:
                 1,
             )
 
-        sway = 0.07 * math.sin(0.75 * t)
-        depth = 0.05 * math.sin(0.45 * t)
-        bob = 0.016 * math.sin(2.2 * t)
-        root = np.array([sway, 0.0, depth])
-        head = np.array([0.0, 1.42 + bob, 0.0]) + root
-        neck = np.array([0.0, 1.27 + bob, 0.0]) + root
-        left_shoulder = np.array([-0.17, 1.25 + bob, 0.02]) + root
-        right_shoulder = np.array([0.17, 1.25 + bob, 0.02]) + root
-        wave = math.sin(1.7 * t)
-        left_elbow = np.array([-0.30, 1.08 + bob, -0.20]) + root
-        right_elbow = np.array([0.30, 1.07 + bob, -0.18]) + root
-        left_wrist = np.array([-0.28, 1.18 + 0.08 * wave + bob, -0.58]) + root
-        right_wrist = np.array([0.28, 1.16 - 0.07 * wave + bob, -0.56]) + root
-        left_hip = np.array([-0.10, 0.88, 0.0]) + root
-        right_hip = np.array([0.10, 0.88, 0.0]) + root
-        left_knee = np.array([-0.12, 0.47, 0.02]) + root
-        right_knee = np.array([0.12, 0.47, 0.02]) + root
-        left_ankle = np.array([-0.13, 0.08, 0.0]) + root
-        right_ankle = np.array([0.13, 0.08, 0.0]) + root
+        joints = self.body_joints(t)
+        head = joints["head"]
+        neck = joints["neck"]
+        left_shoulder = joints["left_shoulder"]
+        right_shoulder = joints["right_shoulder"]
+        left_elbow = joints["left_elbow"]
+        right_elbow = joints["right_elbow"]
+        left_wrist = joints["left_wrist"]
+        right_wrist = joints["right_wrist"]
+        left_hip = joints["left_hip"]
+        right_hip = joints["right_hip"]
+        left_knee = joints["left_knee"]
+        right_knee = joints["right_knee"]
+        left_ankle = joints["left_ankle"]
+        right_ankle = joints["right_ankle"]
 
         def project(point):
             projected = self._project(point)
@@ -538,7 +632,7 @@ class SyntheticScene:
         )
         cv2.putText(
             frame,
-            f"t = {t:4.1f} s",
+            f"t = {t % SYNTHETIC_LOOP_S:4.1f} s",
             (width - 170, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
@@ -546,4 +640,68 @@ class SyntheticScene:
             1,
             cv2.LINE_AA,
         )
+        return frame
+
+
+class SyntheticClip:
+    """Lazily pre-generated, exactly looping synthetic video.
+
+    Rendering all of the scene geometry costs about 10 ms at 720p, which is
+    too slow for a 120 Hz test source. The clip renders each frame index once,
+    stores it as JPEG, and decodes the cached copy on later loops. JPEG keeps
+    the memory bounded (a 6-second 120 fps loop is roughly 60 MB instead of
+    several gigabytes of raw BGR).
+
+    Deriving the frame index from ``elapsed`` also makes playback independent
+    of render speed: a slow first pass cannot shift the loop phase.
+    """
+
+    def __init__(
+        self,
+        scene: SyntheticScene,
+        fps: int,
+        quality: int = 92,
+        max_frames: int = 600,
+    ):
+        self.scene = scene
+        self.fps = max(1, int(fps))
+        self.quality = max(50, min(98, int(quality)))
+        self.max_frames = max(0, int(max_frames))
+        self.loop_frames = max(1, int(round(self.fps * SYNTHETIC_LOOP_S)))
+        self._cache: dict[int, bytes] = {}
+        self._cv2 = None
+
+    @property
+    def cached_frames(self) -> int:
+        return len(self._cache)
+
+    def clear(self) -> None:
+        self._cache.clear()
+
+    def _cv(self):
+        if self._cv2 is not None:
+            return self._cv2
+        self._cv2 = self.scene._cv()
+        return self._cv2
+
+    def render(self, elapsed: float) -> np.ndarray:
+        cv2 = self._cv()
+        index = int(round(float(elapsed) * self.fps)) % self.loop_frames
+        cached = self._cache.get(index)
+        if cached is not None:
+            image = cv2.imdecode(
+                np.frombuffer(cached, dtype=np.uint8), cv2.IMREAD_COLOR
+            )
+            if image is not None:
+                return image
+        frame = self.scene.render(index / float(self.fps))
+        if self.max_frames <= 0 or len(self._cache) < self.max_frames:
+            if index not in self._cache:
+                ok, buffer = cv2.imencode(
+                    ".jpg",
+                    frame,
+                    [int(cv2.IMWRITE_JPEG_QUALITY), self.quality],
+                )
+                if ok:
+                    self._cache[index] = buffer.tobytes()
         return frame

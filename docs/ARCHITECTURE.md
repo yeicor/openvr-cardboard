@@ -58,6 +58,8 @@ duplicated mono image.
 | `openvrcardboard-tracking` | `TrackingWorker` | Run markers/hands/body on the newest frame, draw overlay |
 | `openvrcardboard-gamepad` | `GamepadManager` | Poll pygame pads, scan for hot-plug every 2 s |
 | `openvrcardboard-phone-imu` | `PhoneImuReceiver` | Receive IMU, order packets, answer clock pings |
+| `openvrcardboard-phone-camera` | `PhoneCameraReceiver` | Authenticate the phone camera socket, accept H.264 frames |
+| `openvrcardboard-camera-h264-*` | `_H264Decoder` | Decode Annex-B H.264 with ffmpeg, publish the newest BGR frame |
 | `openvrcardboard-fusion` | `FusionWorker` | Compose and publish frames at `driver.state_rate_hz` |
 | `openvrcardboard-send` | `DriverLink` | Send the newest frame over UDP |
 | `openvrcardboard-recv` | `DriverLink` | Receive haptics/status from the driver |
@@ -392,9 +394,10 @@ The pure modules are deliberately free of Qt/OpenCV/socket dependencies where
 possible. Tests cover quaternion math, camera projection/unprojection, marker
 geometry, ArUco detection and pose refinement, chessboard calibration,
 hand/body mapping, fusion source selection, estimator recentering, UDP framing,
-gamepad mapping, video header composition, shared-state snapshots and runtime
-lifecycle. Hardware-specific paths (SteamVR API, real camera, MediaPipe
-inference, pygame) are thin wrappers around those tested helpers.
+gamepad mapping, video header composition, phone camera framing/auth/router
+fallback, synthetic scene looping and runtime lifecycle. Hardware-specific paths
+(SteamVR API, real camera, MediaPipe inference, pygame) are thin wrappers around
+those tested helpers.
 
 ## 11. Extension points
 

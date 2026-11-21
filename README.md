@@ -20,6 +20,10 @@ setup for SteamVR and OpenXR:
 - **Cardboard phone HMD** — an Android phone streams IMU orientation at sensor
   rate and displays stereo video from the PC. The desktop fuses phone rotation
   with board position for a 6DoF headset.
+- **Phone camera mode** — the same app can upload its rear camera as 720p120
+  H.264. The desktop uses it as the tracking camera while connected and falls
+  back to the local webcam automatically. USB tethering is recommended for the
+  cleanest link.
 - **Native SteamVR driver and Monado OpenXR runtime** — the C++17 driver
   creates a virtual HMD, controllers and generic trackers on Linux and Windows.
   On Linux the app also registers a Monado-based OpenXR runtime, so OpenXR
@@ -41,7 +45,7 @@ fit together.
 | Webcam | 720p/30 or 1080p/60; manual or marker-aware automatic exposure |
 | Python (source install) | 3.12 or newer |
 | Gamepads (optional) | Two Xbox-style pads for two-handed controller emulation |
-| Phone (optional) | Android 8.0+, rotation-vector sensor, same Wi-Fi as the PC |
+| Phone (optional) | Android 8.0+, rotation-vector sensor, same Wi-Fi or USB tethering |
 
 The desktop app is tested with Python 3.12–3.14, OpenCV 5, MediaPipe 1.2 Tasks,
 PySide6 6.10+ and pygame-ce 2.5.8. The Android app targets
@@ -53,7 +57,7 @@ API 37 with AGP 9.5.1 and Gradle 9.9.1.
 | --- | --- |
 | `driver/` | Native OpenVR driver (C++17, CMake, vendored OpenVR headers) |
 | `desktop/` | Python desktop app (PySide6 UI, OpenCV/MediaPipe tracking, gamepads, phone link) |
-| `android/` | Kotlin companion app for phone IMU and stereo video |
+| `android/` | Kotlin companion app for phone IMU, stereo video and phone camera |
 | `shim/` | OpenXR capture shim used to stream another application's eye textures |
 | `docs/PROTOCOL.md` | Wire protocol shared by all components |
 | `docs/ARCHITECTURE.md` | Coordinate frames, threads, fusion and lifecycle |
@@ -253,6 +257,8 @@ the driver/OpenXR badge is green, and the active OpenXR runtime is Monado
 Build or install the Android APK from [`docs/ANDROID.md`](docs/ANDROID.md), put
 the phone in a Cardboard-style holder with the HMD board (IDs 0–4) facing the
 camera, and enter the desktop's LAN IP in the app. See **Phone headset** below.
+To use the phone as the tracking camera instead of the webcam, choose **Camera**
+mode in the app and set the desktop's camera port (default `8766`).
 
 ### 8. Use other applications
 
@@ -390,6 +396,17 @@ eye-screen distance, FOV, distortion and overscan sent to the phone.
 
 The phone is optional. A normal monitor, a TV or another SteamVR headset can be
 used while the app supplies tracking and controllers.
+
+### Phone camera mode
+
+Choose **Camera** in the Android app instead of **Headset**. The phone uploads
+its rear camera to `phone.camera_port` (default `8766`), targeting 1280×720 at
+up to 120 FPS. The desktop keeps the local camera open and switches tracking to
+the phone while frames arrive, then falls back when the phone stops. Both
+directions have independent quality settings: `phone.camera_bitrate_mbps`
+(default 40 Mbps) for the phone upload and `phone.bitrate_mbps` (default
+40 Mbps) for the headset video. USB tethering with internet sharing is the
+recommended link; raise the camera bitrate to 60–80 Mbps on USB.
 
 ## Controllers and input
 
@@ -600,7 +617,8 @@ archive. Each successful run also publishes one consolidated
 | Gamepad not detected | pygame-ce installed? Correct index? `/dev/input` permissions? Reconnect the pad and wait 2 s. |
 | Phone IMU not seen | PC IP, UDP `39101`, firewall, AP isolation, phone on the same subnet. |
 | Phone video not seen | TCP `8765`, token mismatch, server started, capture source/test pattern. |
-| Video lag | Use 5 GHz, lower `phone.fps`, `width`/`height` and JPEG quality. |
+| Phone camera not used | TCP `8766`, token mismatch, **Camera** mode selected, camera permission granted, firewall allows the link. |
+| Video lag | Use 5 GHz or USB tethering, lower `phone.fps`, `width`/`height` and JPEG quality. |
 | Virtual HMD conflicts with a real headset | Disable `driver.enable_virtual_hmd`. |
 | SteamVR crashes after install | Remove `drivers/openvrcardboard`, restore the backup, and check that the driver architecture matches SteamVR (64-bit). |
 | Portable app fails at startup | Run `openvrcardboard --self-test`; it reports which bundled stack failed to import. |
@@ -617,13 +635,15 @@ Logs:
 
 - The driver link is loopback-only by default and carries no authentication.
   Keep `driver.udp_host` at `127.0.0.1` unless you understand the risk.
-- Phone IMU, clock sync and video are plaintext on your LAN. Set `phone.token`
-  to authenticate the IMU/clock packets and the video WebSocket, and use a
-  trusted network. The Android app requests `INTERNET`, `ACCESS_NETWORK_STATE`,
-  `ACCESS_WIFI_STATE` and `WAKE_LOCK`; it does not request camera, microphone,
-  location or storage permissions.
+- Phone IMU, clock sync, video and camera frames are plaintext on your LAN or
+  USB tether. Set `phone.token` to authenticate the IMU/clock packets, the
+  video WebSocket and the camera WebSocket, and use a trusted network. The
+  Android app requests `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`,
+  `CAMERA` and `WAKE_LOCK`; camera permission is requested only when you start
+  Camera mode. It does not request microphone, location or storage permissions.
 - Webcam frames stay on the machine unless you explicitly capture them or use
-  the phone camera source.
+  the phone camera source. Phone camera frames are decoded in memory for
+  tracking and are not recorded unless you start a recording.
 - Test recordings contain synthetic scenes, not real camera or desktop data.
 
 ## License

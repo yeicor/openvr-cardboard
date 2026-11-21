@@ -310,6 +310,14 @@ class PhoneConfig:
     imu_port: int = 39101
     video_enabled: bool = True
     video_port: int = 8765
+    # Phone-as-webcam: the phone uploads H.264 access units to this WebSocket
+    # port and the desktop uses them as the tracking camera while connected.
+    camera_enabled: bool = True
+    camera_port: int = 8766
+    camera_bitrate_mbps: float = 40.0
+    # Fall back to the configured camera when no phone frame arrived for this
+    # long (covers Wi-Fi stalls as well as an explicit disconnect).
+    camera_timeout_s: float = 0.5
     token: str = ""
     layout: str = "sbs"  # mono, sbs, top_bottom
     capture_source: str = "test"  # test, screen, camera, game, openxr

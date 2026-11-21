@@ -21,8 +21,10 @@ object Protocol {
     const val TYPE_IMU = 0x20
     const val TYPE_TIME_PING = 0x21
     const val TYPE_TIME_PONG = 0x22
+    const val TYPE_CAMERA_FRAME = 0x30
 
     const val HEADER_SIZE = 12
+    const val CAMERA_HEADER_SIZE = 28
     const val IMU_SIZE = 64
     const val TIME_PING_SIZE = 20
     const val TIME_PONG_SIZE = 28
@@ -39,6 +41,7 @@ object Protocol {
 
     const val VIDEO_FLAG_KEYFRAME = 0x08
     const val VIDEO_FLAG_CONFIG = 0x10
+    const val CAMERA_FLAG_KEYFRAME = 0x01
 
     fun codecName(value: Int): String = when (value and 0x07) {
         CODEC_HEVC -> "hevc"
@@ -136,6 +139,32 @@ object Protocol {
         writeHeader(buffer, TYPE_TIME_PING, sequence)
         buffer.putDouble(clientTime)
         buffer.put(authTag)
+        return buffer.array()
+    }
+
+    /**
+     * One Annex-B H.264 access unit for the desktop webcam receiver.
+     *
+     * Header layout (little-endian): magic/version/type/flags/sequence as
+     * usual, then the capture timestamp in seconds, width and height. The
+     * desktop decodes the payload and uses its arrival time for tracking.
+     */
+    fun cameraPacket(
+        sequence: Int,
+        timestampSeconds: Double,
+        width: Int,
+        height: Int,
+        payload: ByteArray,
+        keyframe: Boolean,
+    ): ByteArray {
+        val buffer = ByteBuffer.allocate(CAMERA_HEADER_SIZE + payload.size)
+            .order(ByteOrder.LITTLE_ENDIAN)
+        writeHeader(buffer, TYPE_CAMERA_FRAME, sequence)
+        buffer.putShort(6, (if (keyframe) CAMERA_FLAG_KEYFRAME else 0).toShort())
+        buffer.putDouble(timestampSeconds)
+        buffer.putInt(width)
+        buffer.putInt(height)
+        buffer.put(payload)
         return buffer.array()
     }
 

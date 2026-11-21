@@ -346,6 +346,21 @@ def validate_config(config: AppConfig) -> list[str]:
 
     cfg.phone.imu_port = int(_clamp(cfg.phone.imu_port, 1, 65535, int))
     cfg.phone.video_port = int(_clamp(cfg.phone.video_port, 1, 65535, int))
+    cfg.phone.camera_enabled = bool(cfg.phone.camera_enabled)
+    cfg.phone.camera_port = int(_clamp(cfg.phone.camera_port, 1, 65535, int))
+    cfg.phone.camera_bitrate_mbps = _clamp(
+        cfg.phone.camera_bitrate_mbps, 1.0, 200.0, float
+    )
+    cfg.phone.camera_timeout_s = _clamp(cfg.phone.camera_timeout_s, 0.1, 10.0, float)
+    if cfg.phone.camera_enabled and cfg.phone.camera_port in (
+        cfg.phone.imu_port,
+        cfg.phone.video_port,
+    ):
+        warnings.append(
+            "phone.camera_port must differ from phone.imu_port and "
+            "phone.video_port; phone camera disabled"
+        )
+        cfg.phone.camera_enabled = False
     if cfg.phone.layout not in ("mono", "sbs", "top_bottom"):
         warnings.append(f"unknown phone layout {cfg.phone.layout!r}; using sbs")
         cfg.phone.layout = "sbs"

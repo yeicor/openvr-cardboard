@@ -1,7 +1,9 @@
 package dev.openvrcardboard.phone
 
+import android.Manifest
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.hardware.display.DisplayManager
@@ -20,10 +22,15 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -37,7 +44,8 @@ import androidx.core.view.WindowInsetsControllerCompat
  * desktop address on every launch. Tapping the video toggles the settings
  * panel; the hardware back button stops the stream.
  */
-class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listener {
+class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listener,
+    CameraStreamer.Listener {
 
     companion object {
         private const val TAG = "OpenVRCardboard"
@@ -45,11 +53,16 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
         private const val KEY_HOST = "host"
         private const val KEY_IMU_PORT = "imu_port"
         private const val KEY_VIDEO_PORT = "video_port"
+        private const val KEY_CAMERA_PORT = "camera_port"
+        private const val KEY_MODE = "mode"
         private const val KEY_TOKEN = "token"
         private const val KEY_SENSOR_HZ = "sensor_hz"
 
+        private const val MODE_HEADSET = "headset"
+        private const val MODE_WEBCAM = "webcam"
         private const val DEFAULT_IMU_PORT = 39101
         private const val DEFAULT_VIDEO_PORT = 8765
+        private const val DEFAULT_CAMERA_PORT = 8766
         private const val DEFAULT_SENSOR_HZ = 120
     }
 
@@ -57,14 +70,21 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
     private lateinit var imuPortField: EditText
     private lateinit var videoPortField: EditText
     private lateinit var sensorHzField: EditText
+    private lateinit var cameraPortField: EditText
     private lateinit var tokenField: EditText
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var statusText: TextView
     private lateinit var panel: LinearLayout
+    private lateinit var headsetFields: LinearLayout
+    private lateinit var modeGroup: RadioGroup
+    private lateinit var headsetModeButton: RadioButton
+    private lateinit var webcamModeButton: RadioButton
+    private lateinit var helpText: TextView
     private lateinit var videoView: StereoView
     private lateinit var videoSurface: VideoSurfaceView
     private lateinit var prefs: SharedPreferences
+    private lateinit var cameraPermission: ActivityResultLauncher<String>
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val frameLock = Any()
@@ -78,6 +98,7 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
 
     private var imuSender: ImuSender? = null
     private var videoClient: VideoClient? = null
+    private var cameraStreamer: CameraStreamer? = null
     private var videoFrames = 0L
     private var displayStatsAt = 0L
     private var displayStatsFrames = 0L
@@ -95,11 +116,15 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
 
     private var imuStatus = "IMU idle"
     private var videoStatus = "Video idle"
+    private var cameraStatus = "Camera idle"
     private var imuBad = false
     private var videoBad = false
+    private var cameraBad = false
+    private var loadingPreferences = false
+    private var pendingWebcamStart: (() -> Unit)? = null
 
     private val autoHidePanel = Runnable {
-        if (running && !imuBad && !videoBad) {
+        if (running && !imuBad && !videoBad && !cameraBad) {
             panel.visibility = View.GONE
         }
     }
@@ -168,6 +193,24 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
         setContentView(R.layout.activity_main)
 
         prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        cameraPermission = registerForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { granted ->
+            val pending = pendingWebcamStart
+            pendingWebcamStart = null
+            if (granted && pending != null) {
+                pending.invoke()
+            } else if (!granted) {
+                running = false
+                cameraBad = true
+                cameraStatus = "Camera permission denied"
+                startButton.isEnabled = true
+                stopButton.isEnabled = false
+                panel.visibility = View.VISIBLE
+                updateStatus()
+                toast("Camera permission is required for camera mode")
+            }
+        }
         bindViews()
         loadPreferences()
         applyIntentOverrides()
@@ -181,6 +224,15 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
         stopButton.setOnClickListener { stopStreaming() }
         videoView.setOnClickListener {
             panel.visibility = if (panel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
+        modeGroup.setOnCheckedChangeListener { _, _ ->
+            if (!loadingPreferences) pendingWebcamStart = null
+            updateModeVisibility()
+            if (!loadingPreferences && running) {
+                stopStreaming()
+            } else {
+                updateStatus()
+            }
         }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -212,6 +264,22 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
             videoPortField.setText(intent.getIntExtra("video_port", DEFAULT_VIDEO_PORT).toString())
             changed = true
         }
+        if (intent.hasExtra("camera_port")) {
+            cameraPortField.setText(
+                intent.getIntExtra("camera_port", DEFAULT_CAMERA_PORT).toString(),
+            )
+            changed = true
+        }
+        if (intent.hasExtra("mode")) {
+            val mode = intent.getStringExtra("mode") ?: MODE_HEADSET
+            if (mode.equals(MODE_WEBCAM, ignoreCase = true)) {
+                webcamModeButton.isChecked = true
+            } else {
+                headsetModeButton.isChecked = true
+            }
+            updateModeVisibility()
+            changed = true
+        }
         if (intent.hasExtra("sensor_hz")) {
             sensorHzField.setText(intent.getIntExtra("sensor_hz", DEFAULT_SENSOR_HZ).toString())
             changed = true
@@ -220,16 +288,20 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
             tokenField.setText(intent.getStringExtra("token") ?: "")
             changed = true
         }
+        updateModeVisibility()
         if (changed) {
             val imuPort = imuPortField.text.toString().toIntOrNull() ?: DEFAULT_IMU_PORT
             val videoPort = videoPortField.text.toString().toIntOrNull() ?: DEFAULT_VIDEO_PORT
+            val cameraPort = cameraPortField.text.toString().toIntOrNull() ?: DEFAULT_CAMERA_PORT
             val sensorHz = sensorHzField.text.toString().toIntOrNull() ?: DEFAULT_SENSOR_HZ
             savePreferences(
                 hostField.text.toString().trim(),
                 imuPort,
                 videoPort,
+                cameraPort,
                 sensorHz,
                 tokenField.text.toString().trim(),
+                if (webcamModeButton.isChecked) MODE_WEBCAM else MODE_HEADSET,
             )
         }
         if (intent.getBooleanExtra("autostart", false)) {
@@ -244,11 +316,17 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
         imuPortField = findViewById(R.id.imuPortField)
         videoPortField = findViewById(R.id.videoPortField)
         sensorHzField = findViewById(R.id.sensorHzField)
+        cameraPortField = findViewById(R.id.cameraPortField)
         tokenField = findViewById(R.id.tokenField)
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)
         statusText = findViewById(R.id.statusText)
         panel = findViewById(R.id.panel)
+        headsetFields = findViewById(R.id.headsetFields)
+        modeGroup = findViewById(R.id.modeGroup)
+        headsetModeButton = findViewById(R.id.headsetModeButton)
+        webcamModeButton = findViewById(R.id.webcamModeButton)
+        helpText = findViewById(R.id.helpText)
         videoView = findViewById(R.id.videoView)
         videoSurface = findViewById(R.id.videoSurface)
         videoSurface.holder.addCallback(object : SurfaceHolder.Callback {
@@ -272,22 +350,60 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
     }
 
     private fun loadPreferences() {
+        loadingPreferences = true
         hostField.setText(prefs.getString(KEY_HOST, ""))
         imuPortField.setText(prefs.getInt(KEY_IMU_PORT, DEFAULT_IMU_PORT).toString())
         videoPortField.setText(prefs.getInt(KEY_VIDEO_PORT, DEFAULT_VIDEO_PORT).toString())
+        cameraPortField.setText(
+            prefs.getInt(KEY_CAMERA_PORT, DEFAULT_CAMERA_PORT).toString(),
+        )
         sensorHzField.setText(prefs.getInt(KEY_SENSOR_HZ, DEFAULT_SENSOR_HZ).toString())
         tokenField.setText(prefs.getString(KEY_TOKEN, ""))
+        if (prefs.getString(KEY_MODE, MODE_HEADSET) == MODE_WEBCAM) {
+            webcamModeButton.isChecked = true
+        } else {
+            headsetModeButton.isChecked = true
+        }
+        loadingPreferences = false
+        updateModeVisibility()
         stopButton.isEnabled = false
     }
 
-    private fun savePreferences(host: String, imuPort: Int, videoPort: Int, sensorHz: Int, token: String) {
+    private fun savePreferences(
+        host: String,
+        imuPort: Int,
+        videoPort: Int,
+        cameraPort: Int,
+        sensorHz: Int,
+        token: String,
+        mode: String,
+    ) {
         prefs.edit()
             .putString(KEY_HOST, host)
             .putInt(KEY_IMU_PORT, imuPort)
             .putInt(KEY_VIDEO_PORT, videoPort)
+            .putInt(KEY_CAMERA_PORT, cameraPort)
             .putInt(KEY_SENSOR_HZ, sensorHz)
             .putString(KEY_TOKEN, token)
+            .putString(KEY_MODE, mode)
             .apply()
+    }
+
+    private fun updateModeVisibility() {
+        val webcam = webcamModeButton.isChecked
+        headsetFields.visibility = if (webcam) View.GONE else View.VISIBLE
+        cameraPortField.visibility = if (webcam) View.VISIBLE else View.GONE
+        if (!webcam) {
+            // The camera port is hidden in headset mode. Do not let an invalid
+            // value typed in camera mode block a headset start.
+            val text = cameraPortField.text.toString().trim()
+            if (text.isNotEmpty() && (text.toIntOrNull() ?: 0) !in 1..65535) {
+                cameraPortField.setText(
+                    prefs.getInt(KEY_CAMERA_PORT, DEFAULT_CAMERA_PORT).toString(),
+                )
+            }
+        }
+        helpText.setText(if (webcam) R.string.help_webcam else R.string.help)
     }
 
     // ------------------------------------------------------------------
@@ -301,26 +417,75 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
             hostField.requestFocus()
             return
         }
-        val imuPort = parsePort(imuPortField, DEFAULT_IMU_PORT) ?: return
-        val videoPort = parsePort(videoPortField, DEFAULT_VIDEO_PORT) ?: return
-        val sensorHz = parseSensorRate() ?: return
         val token = tokenField.text.toString().trim()
+        val webcam = webcamModeButton.isChecked
+        val mode = if (webcam) MODE_WEBCAM else MODE_HEADSET
+        val imuPort = imuPortField.text.toString().toIntOrNull() ?: DEFAULT_IMU_PORT
+        val videoPort = videoPortField.text.toString().toIntOrNull() ?: DEFAULT_VIDEO_PORT
+        val sensorHz = sensorHzField.text.toString().toIntOrNull() ?: DEFAULT_SENSOR_HZ
+        val checkedCameraPort = parsePort(cameraPortField, DEFAULT_CAMERA_PORT) ?: return
 
-        savePreferences(host, imuPort, videoPort, sensorHz, token)
+        if (webcam) {
+            savePreferences(
+                host,
+                imuPort,
+                videoPort,
+                checkedCameraPort,
+                sensorHz,
+                token,
+                mode,
+            )
+            hideKeyboard()
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                pendingWebcamStart = { startWebcam(host, checkedCameraPort, token) }
+                cameraPermission.launch(Manifest.permission.CAMERA)
+                return
+            }
+            startWebcam(host, checkedCameraPort, token)
+            return
+        }
+
+        val checkedImuPort = parsePort(imuPortField, DEFAULT_IMU_PORT) ?: return
+        val checkedVideoPort = parsePort(videoPortField, DEFAULT_VIDEO_PORT) ?: return
+        val checkedSensorHz = parseSensorRate() ?: return
+        savePreferences(
+            host,
+            checkedImuPort,
+            checkedVideoPort,
+            checkedCameraPort,
+            checkedSensorHz,
+            token,
+            mode,
+        )
         hideKeyboard()
+        startHeadset(host, checkedImuPort, checkedVideoPort, checkedSensorHz, token)
+    }
 
+    private fun startHeadset(
+        host: String,
+        imuPort: Int,
+        videoPort: Int,
+        sensorHz: Int,
+        token: String,
+    ) {
         running = true
         videoFrames = 0L
         displayStatsAt = 0L
         displayStatsFrames = 0L
-        Log.i(TAG, "streaming requested")
+        Log.i(TAG, "headset streaming requested")
         imuBad = false
         videoBad = false
+        cameraBad = false
         imuStatus = "IMU starting…"
         videoStatus = "Video connecting…"
+        cameraStatus = "Camera mode off"
         startButton.isEnabled = false
         stopButton.isEnabled = true
         panel.visibility = View.VISIBLE
+        videoSurface.visibility = View.GONE
+        videoView.visibility = View.VISIBLE
         updateStatus()
 
         val sender = ImuSender(host, imuPort, sensorHz, token, { displayRotation }, this)
@@ -344,8 +509,38 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
         mainHandler.postDelayed(autoHidePanel, 1500)
     }
 
+    private fun startWebcam(host: String, port: Int, token: String) {
+        if (running) return
+        running = true
+        videoFrames = 0L
+        displayStatsAt = 0L
+        displayStatsFrames = 0L
+        Log.i(TAG, "camera streaming requested")
+        imuBad = false
+        videoBad = false
+        cameraBad = false
+        imuStatus = "IMU off (camera mode)"
+        videoStatus = "Display off (camera mode)"
+        cameraStatus = "Camera connecting…"
+        startButton.isEnabled = false
+        stopButton.isEnabled = true
+        panel.visibility = View.VISIBLE
+        videoView.clear()
+        videoSurface.visibility = View.GONE
+        videoView.visibility = View.VISIBLE
+        updateStatus()
+
+        val streamer = CameraStreamer(host, port, token, this)
+        cameraStreamer = streamer
+        streamer.start()
+
+        mainHandler.removeCallbacks(autoHidePanel)
+        mainHandler.postDelayed(autoHidePanel, 2000)
+    }
+
     private fun stopStreaming(showPanel: Boolean = true) {
         running = false
+        pendingWebcamStart = null
         mainHandler.removeCallbacks(autoHidePanel)
 
         val sender = imuSender
@@ -356,6 +551,10 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
         videoClient = null
         client?.stop()
 
+        val streamer = cameraStreamer
+        cameraStreamer = null
+        streamer?.stop()
+
         clearPendingFrame()
         client?.setSurface(null)
         hardwareActive = false
@@ -365,8 +564,10 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
 
         imuStatus = "IMU stopped"
         videoStatus = "Video stopped"
+        cameraStatus = "Camera stopped"
         imuBad = false
         videoBad = false
+        cameraBad = false
         startButton.isEnabled = true
         stopButton.isEnabled = false
         if (showPanel) panel.visibility = View.VISIBLE
@@ -526,6 +727,39 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
         }
     }
 
+    // ------------------------------------------------------------------
+    // Camera listener (camera / OkHttp threads)
+    // ------------------------------------------------------------------
+    override fun onCameraStatus(message: String) {
+        mainHandler.post {
+            if (destroyed) return@post
+            cameraBad = false
+            cameraStatus = message
+            Log.i(TAG, "camera: $message")
+            updateStatus()
+        }
+    }
+
+    override fun onCameraError(message: String) {
+        mainHandler.post {
+            if (destroyed) return@post
+            cameraBad = true
+            cameraStatus = message
+            Log.w(TAG, "camera error: $message")
+            panel.visibility = View.VISIBLE
+            updateStatus()
+        }
+    }
+
+    override fun onCameraFormat(width: Int, height: Int, fps: Int) {
+        mainHandler.post {
+            if (destroyed) return@post
+            cameraStatus = "Camera $width×$height @ $fps fps"
+            Log.i(TAG, "camera format ${width}x$height fps=$fps")
+            updateStatus()
+        }
+    }
+
     private fun clearPendingFrame() {
         val pending = synchronized(frameLock) {
             val current = pendingFrame
@@ -625,9 +859,17 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
     // Helpers
     // ------------------------------------------------------------------
     private fun updateStatus() {
-        statusText.text = "$imuStatus\n$videoStatus"
+        statusText.text = if (webcamModeButton.isChecked) {
+            cameraStatus
+        } else {
+            "$imuStatus\n$videoStatus"
+        }
         statusText.setTextColor(
-            if (imuBad || videoBad) Color.rgb(255, 123, 114) else Color.rgb(159, 227, 165)
+            if (imuBad || videoBad || cameraBad) {
+                Color.rgb(255, 123, 114)
+            } else {
+                Color.rgb(159, 227, 165)
+            }
         )
     }
 

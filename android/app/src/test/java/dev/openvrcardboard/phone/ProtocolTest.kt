@@ -32,15 +32,20 @@ class ProtocolTest {
         return vectors
     }
 
-    private fun assertHeader(data: ByteArray, expectedType: Int, expectedSequence: Int) {
+    private fun assertHeader(
+        data: ByteArray,
+        expectedType: Int,
+        expectedSequence: Int,
+        expectedFlags: Int = 0,
+    ) {
         assertEquals('O'.code.toByte(), data[0])
         assertEquals('V'.code.toByte(), data[1])
         assertEquals('R'.code.toByte(), data[2])
         assertEquals('C'.code.toByte(), data[3])
         assertEquals(Protocol.VERSION, data[4])
         assertEquals(expectedType.toByte(), data[5])
-        assertEquals(0, data[6].toInt())
-        assertEquals(0, data[7].toInt())
+        assertEquals((expectedFlags and 0xFF).toByte(), data[6])
+        assertEquals((expectedFlags shr 8).toByte(), data[7])
         assertEquals(expectedSequence, wrap(data).getInt(8))
     }
 
@@ -116,6 +121,51 @@ class ProtocolTest {
         assertEquals(Protocol.TIME_PING_SIZE, packet.size)
         assertHeader(packet, Protocol.TYPE_TIME_PING, 9)
         assertEquals(55.125, wrap(packet).getDouble(12), 0.0)
+    }
+
+    @Test
+    fun cameraPacketMatchesDocumentedLayout() {
+        val payload = byteArrayOf(0, 0, 0, 1, 0x65, 0x88.toByte())
+        val packet = Protocol.cameraPacket(
+            sequence = 13,
+            timestampSeconds = 12.5,
+            width = 1280,
+            height = 720,
+            payload = payload,
+            keyframe = true,
+        )
+
+        assertEquals(Protocol.CAMERA_HEADER_SIZE + payload.size, packet.size)
+        assertHeader(
+            packet,
+            Protocol.TYPE_CAMERA_FRAME,
+            13,
+            expectedFlags = Protocol.CAMERA_FLAG_KEYFRAME,
+        )
+        val buffer = wrap(packet)
+        assertEquals(1, buffer.getShort(6).toInt())
+        assertEquals(12.5, buffer.getDouble(12), 0.0)
+        assertEquals(1280, buffer.getInt(20))
+        assertEquals(720, buffer.getInt(24))
+        assertArrayEquals(payload, packet.copyOfRange(Protocol.CAMERA_HEADER_SIZE, packet.size))
+    }
+
+    @Test
+    fun cameraGoldenVectorMatchesSharedPythonFile() {
+        val vectors = loadGoldenVectors()
+        val payload = byteArrayOf(0, 0, 0, 1, 0x65, 0x88.toByte())
+        val packet = Protocol.cameraPacket(
+            sequence = 13,
+            timestampSeconds = 12.5,
+            width = 1280,
+            height = 720,
+            payload = payload,
+            keyframe = true,
+        )
+        assertArrayEquals(
+            vectors.getValue("camera_frame"),
+            packet,
+        )
     }
 
     @Test

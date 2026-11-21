@@ -94,6 +94,7 @@ files = [
     "openvrcardboard/installer.py",
     "openvrcardboard/mediapipe_models.py",
     "openvrcardboard/netutil.py",
+    "openvrcardboard/phone_camera.py",
     "openvrcardboard/protocol.py",
 ]
 warn_unused_ignores = true

@@ -33,6 +33,9 @@ class CameraFrame:
     sequence: int
     width: int
     height: int
+    # "webcam", "synthetic" or "phone". Tracking uses it to reset its sequence
+    # bookkeeping when the active source changes.
+    source: str = ""
 
 
 @dataclass(slots=True)
@@ -63,6 +66,10 @@ class CameraStats:
     visible_markers: int = 0
     auto_control: bool = False
     auto_actions: int = 0
+    source: str = ""
+    phone_connected: bool = False
+    phone_active: bool = False
+    dropped_frames: int = 0
 
 
 def _fourcc_text(cv2, value: int) -> str:
@@ -723,11 +730,13 @@ class CameraCapture:
                 sequence=sequence,
                 width=self._stats.width,
                 height=self._stats.height,
+                source=str(getattr(self.config, "source", "webcam") or "webcam"),
             )
+            self._stats.source = self._frame.source
             self._stats.last_error = ""
 
     def _synthetic_loop(self) -> None:
-        from .synthetic import SyntheticError, SyntheticScene
+        from .synthetic import SyntheticClip, SyntheticError, SyntheticScene
 
         try:
             scene = SyntheticScene(
@@ -752,11 +761,13 @@ class CameraCapture:
             self._stats.width = scene.width
             self._stats.height = scene.height
             self._stats.last_error = ""
+        clip = SyntheticClip(scene, fps=int(self.config.fps))
         LOGGER.info(
-            "synthetic camera running: %dx%d at %.1f fps",
+            "synthetic camera running: %dx%d at %.1f fps (%d-frame loop)",
             scene.width,
             scene.height,
             float(self.config.fps),
+            clip.loop_frames,
         )
 
         start = time.monotonic()
@@ -766,7 +777,7 @@ class CameraCapture:
             stamp = time.monotonic()
             started = time.perf_counter()
             try:
-                image = scene.render(stamp - start)
+                image = clip.render(stamp - start)
             except Exception as exc:
                 with self._lock:
                     self._stats.last_error = f"synthetic render failed: {exc}"
@@ -903,4 +914,117 @@ class CameraCapture:
                 visible_markers=self._stats.visible_markers,
                 auto_control=self._stats.auto_control,
                 auto_actions=self._stats.auto_actions,
+                source=self._stats.source,
+                phone_connected=self._stats.phone_connected,
+                phone_active=self._stats.phone_active,
+                dropped_frames=self._stats.dropped_frames,
             )
+
+
+class CameraRouter:
+    """Prefer a connected phone camera and fall back to the local capture.
+
+    The local camera keeps running while the phone streams so switching back
+    is immediate, and the first phone frame replaces it without restarting the
+    tracking worker. A phone that stops sending frames is treated as gone
+    after ``timeout_s``; the next call returns the local frame again.
+    """
+
+    def __init__(self, base: CameraCapture, phone=None, timeout_s: float = 0.5):
+        self.base = base
+        self.phone = phone
+        self.timeout_s = max(0.05, float(timeout_s))
+        self._phone_active = False
+        self._lock = threading.Lock()
+
+    @property
+    def running(self) -> bool:
+        return self.base.running
+
+    def start(self) -> None:
+        self.base.start()
+
+    def stop(self) -> None:
+        # The phone receiver is owned by the runtime and may outlive tracking.
+        self.base.stop()
+
+    def __enter__(self) -> "CameraRouter":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.stop()
+
+    def _phone_frame(self) -> Optional[CameraFrame]:
+        if self.phone is None:
+            return None
+        getter = getattr(self.phone, "frame_if_active", None)
+        if getter is None:
+            return None
+        try:
+            return getter(self.timeout_s)
+        except Exception:
+            return None
+
+    def latest(self) -> Optional[CameraFrame]:
+        frame = self._phone_frame()
+        if frame is not None:
+            with self._lock:
+                self._phone_active = True
+            return frame
+        with self._lock:
+            was_active = self._phone_active
+            self._phone_active = False
+        if was_active:
+            LOGGER.info("phone camera stopped; resuming local camera")
+        return self.base.latest()
+
+    def latest_copy(self) -> Optional[CameraFrame]:
+        frame = self.latest()
+        if frame is None:
+            return None
+        return CameraFrame(
+            image=frame.image.copy(),
+            timestamp=frame.timestamp,
+            sequence=frame.sequence,
+            width=frame.width,
+            height=frame.height,
+            source=frame.source,
+        )
+
+    def phone_active(self) -> bool:
+        with self._lock:
+            return self._phone_active
+
+    def stats(self) -> CameraStats:
+        if self.phone_active():
+            getter = getattr(self.phone, "stats", None)
+            if getter is not None:
+                try:
+                    stats = getter()
+                    stats.phone_active = True
+                    return stats
+                except Exception:
+                    pass
+        stats = self.base.stats()
+        stats.source = stats.source or str(
+            getattr(self.base.config, "source", "webcam") or "webcam"
+        )
+        stats.phone_active = self.phone_active()
+        if self.phone is not None:
+            getter = getattr(self.phone, "connected", None)
+            try:
+                stats.phone_connected = bool(getter() if callable(getter) else getter)
+            except Exception:
+                stats.phone_connected = False
+        return stats
+
+    def report_marker_detection(self, detected: int, visible: int) -> None:
+        # Only the local camera exposes exposure/gain controls. Feeding it
+        # marker coverage while the phone is active would make an unused
+        # camera drift.
+        if self.phone_active():
+            return
+        reporter = getattr(self.base, "report_marker_detection", None)
+        if reporter is not None:
+            reporter(detected, visible)

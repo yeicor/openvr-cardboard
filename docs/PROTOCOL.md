@@ -19,6 +19,7 @@ and accelerations metres/second².
 | 39100 | desktop → driver, driver → desktop | tracked-device state, haptics, driver status |
 | 39101 | phone → desktop, desktop → phone | phone IMU, clock synchronisation |
 | 8765 | phone ← desktop (TCP/WebSocket) | stereo video frames and control messages |
+| 8766 | phone → desktop (TCP/WebSocket) | phone camera frames and control messages |
 | 4242 | desktop → Monado remote driver | OpenXR device poses |
 | 39102 | OpenXR app → desktop | captured eye textures, grabs and haptics |
 
@@ -352,7 +353,75 @@ geometry so the phone can align the two eye images without rebuilding the app.
 
 Unknown JSON fields and message types must be ignored for forward compatibility.
 
-## 9. Configuration files
+## 9. Phone camera WebSocket
+
+The desktop app hosts a second WebSocket server (default
+`ws://0.0.0.0:8766/camera`) for the Android app's **Camera** mode. The phone
+captures its rear camera, encodes H.264 with MediaCodec and uploads Annex-B
+access units. The desktop decodes them with its bundled ffmpeg and exposes the
+newest frame to the tracking loop. Only one phone is accepted at a time; a new
+authenticated connection replaces the old one.
+
+- The phone connects to `/camera` (the desktop also accepts `/webcam` and `/`),
+  optionally with `?token=<pairing token>`. The token is `phone.token`, the
+  same secret used for IMU and video.
+- The desktop immediately sends `camera_welcome` with the preferred stream
+  parameters and the configured bitrate.
+- The phone replies with `camera_hello`, then starts sending binary frames.
+- The desktop may send `camera_request_keyframe` when its decoder needs a new
+  reference frame.
+
+`camera_welcome` (desktop → phone):
+
+```json
+{"type":"camera_welcome","protocol":1,"session":"a4f2","codec":"h264","bitrate_mbps":40.0,"prefer_width":1280,"prefer_height":720,"prefer_fps":120}
+```
+
+`camera_hello` (phone → desktop):
+
+```json
+{"type":"camera_hello","protocol":1,"name":"Example Phone","width":1280,"height":720,"fps":120,"codec":"h264","rotation":90,"hfov_deg":66.5,"bitrate_mbps":40.0}
+```
+
+`bitrate_mbps` on the phone is advisory. `hfov_deg` is optional; when present
+and between 10° and 150° the desktop uses it to build the pinhole camera model
+for marker and body tracking at the streamed resolution instead of assuming
+the local webcam's calibration. `camera_stats` messages are accepted for
+logging, and `ping` is answered with `pong`.
+
+### 9.1 Binary camera frame
+
+```
+offset 0   uint8   magic "O"
+offset 1   uint8   magic "V"
+offset 2   uint8   magic "R"
+offset 3   uint8   magic "C"
+offset 4   uint8   version = 1
+offset 5   uint8   type = 0x30
+offset 6   uint16  flags (bit 0 = keyframe)
+offset 8   uint32  frame sequence
+offset 12  double  capture time (Android elapsedRealtime seconds)
+offset 20  uint32  width
+offset 24  uint32  height
+offset 28  bytes   Annex-B H.264 access unit
+```
+
+Total header: 28 bytes. The payload is one encoded access unit starting with
+`00 00 00 01` (or `00 00 01`) start codes. Keyframes include SPS/PPS. The
+desktop drops malformed headers, rejects implausible dimensions and rebuilds
+the decoder when the resolution changes. It requests a keyframe after a decode
+error, so a lost reference frame does not permanently corrupt the picture.
+
+### 9.2 Tracking integration
+
+The desktop keeps its local camera running while the phone stream is active.
+`CameraRouter` serves a phone frame only while one arrived within
+`phone.camera_timeout_s` (default 0.5 s); otherwise it returns the newest local
+frame. This makes a phone disconnect fall back immediately without restarting
+the tracking worker. The router's statistics expose the active source, phone
+connection state and dropped frame counts.
+
+## 10. Configuration files
 
 The desktop app writes `config.json` (see `desktop/openvrcardboard/config.py`). The
 driver reads `openvrcardboard` keys from SteamVR's merged settings. The Android app
@@ -365,6 +434,9 @@ Defaults shared by all components:
 | driver UDP port | 39100 |
 | phone IMU UDP port | 39101 |
 | video WebSocket port | 8765 |
+| phone camera WebSocket port | 8766 |
+| phone camera bitrate | 40 Mbps |
+| phone camera fallback timeout | 0.5 s |
 | OpenXR remote-driver port | 4242 |
 | OpenXR capture port | 39102 |
 | state rate | 250 Hz |

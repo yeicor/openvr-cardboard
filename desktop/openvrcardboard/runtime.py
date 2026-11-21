@@ -22,6 +22,7 @@ from .fusion import PhonePoseEstimator, PoseComposer
 from .game import GameInput
 from .gamepad import GamepadManager
 from .openxr import OpenXRManager
+from .phone_camera import PhoneCameraReceiver
 from .phone_link import PhoneImuReceiver
 from .pipeline import FusionWorker, TrackingWorker
 from .protocol import DeviceId
@@ -65,6 +66,7 @@ class Runtime:
             token=config.phone.token,
             on_sample=self._on_phone_sample,
         )
+        self.phone_camera = PhoneCameraReceiver(config.phone)
         self.estimator = PhonePoseEstimator(
             neutral_position=config.tracking.manual_hmd_position,
             recenter_on_start=config.tracking.phone_recenter_on_start,
@@ -83,6 +85,7 @@ class Runtime:
             self.model,
             self.camera_position,
             self.camera_rotation,
+            phone_camera=self.phone_camera if config.phone.camera_enabled else None,
         )
         self.fusion = FusionWorker(
             self.state,
@@ -130,6 +133,19 @@ class Runtime:
             except OSError as exc:
                 problems.append(f"phone IMU: {exc}")
                 self.state.set_status(last_error=f"phone IMU: {exc}")
+
+            if self.config.phone.camera_enabled:
+                try:
+                    self.phone_camera.start()
+                    self.state.add_note(
+                        f"phone camera listening on port "
+                        f"{self.phone_camera.local_port}"
+                    )
+                except Exception as exc:
+                    problems.append(f"phone camera: {exc}")
+                    self.state.set_status(last_error=f"phone camera: {exc}")
+            else:
+                self.state.add_note("phone camera mode is disabled")
 
             if self.config.openxr.enabled:
                 try:
@@ -179,6 +195,7 @@ class Runtime:
                     self.gamepads.running,
                     self.openxr.running,
                     self.phone.local_port,
+                    self.phone_camera.running,
                     self.driver.local_port,
                     self.video is not None,
                 )
@@ -190,6 +207,7 @@ class Runtime:
             self.tracking.stop()
             self.gamepads.stop()
             self.openxr.stop()
+            self.phone_camera.stop()
             self.phone.stop()
             self.driver.stop()
         LOGGER.info("runtime stopped")
@@ -409,7 +427,15 @@ class Runtime:
                 "visible_markers": camera.visible_markers,
                 "auto_control": camera.auto_control,
                 "auto_actions": camera.auto_actions,
+                "source": camera.source,
+                "device": camera.device,
+                "dropped_frames": camera.dropped_frames,
+                "phone_connected": camera.phone_connected,
+                "phone_active": camera.phone_active,
+                "frames_processed": self.tracking.frames_processed,
+                "frames_skipped": self.tracking.frames_skipped,
             },
+            "phone_camera": self.phone_camera.status(),
             "markers": self.markers_available(),
             "hands": self.hands_available(),
             "body": self.body_available(),

@@ -3,6 +3,43 @@
 All notable changes to OpenVR Cardboard are documented here. The project
 follows semantic versioning for the desktop package and the release tags.
 
+## [Unreleased]
+
+### Added
+
+- Android **Camera** mode: the phone uploads its rear camera as H.264 to the
+  desktop's `/camera` WebSocket, targeting 1280×720 at up to 120 FPS with
+  Camera2 constrained high-speed capture when available.
+- Desktop phone-camera receiver and ffmpeg decoder with token authentication,
+  keyframe recovery, replacement handling and drop statistics.
+- `CameraRouter` keeps the local camera running and uses fresh phone frames
+  while they arrive, falling back to the local camera after
+  `phone.camera_timeout_s`.
+- Separate quality controls for both directions: `phone.camera_bitrate_mbps`
+  for the phone upload and `phone.bitrate_mbps` for the headset stream.
+- The phone reports its approximate horizontal FOV so marker PnP and body
+  tracking use the phone's intrinsics at the streamed resolution.
+- Synthetic camera scene now loops cleanly over six seconds with more joint and
+  board motion for tracking tests, plus a cached `SyntheticClip`.
+
+### Changed
+
+- USB tethering with internet sharing is documented as the recommended
+  phone-to-desktop link for camera mode and 720p120.
+- Camera-mode bitrate defaults to 40 Mbps, with 60–80 Mbps recommended on USB.
+
+### Fixed
+
+- A replaced phone camera connection can no longer close the new decoder or
+  clear the new session state.
+- Camera streaming ignores duplicate disconnect callbacks, cancels stale
+  WebSocket clients and avoids joining its own camera thread.
+- The phone camera ffmpeg decoder now emits live frames instead of waiting for
+  the input stream to close; the `nobuffer` probe flag silently discarded a
+  piped H.264 stream.
+- Camera mode validates the camera port before saving settings and clears a
+  pending permission start when the mode changes.
+
 ## [1.1.0] - 2026-11-19
 
 ### Added

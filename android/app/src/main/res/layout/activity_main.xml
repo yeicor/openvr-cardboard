@@ -34,6 +34,30 @@
             android:textSize="18sp"
             android:textStyle="bold" />
 
+        <RadioGroup
+            android:id="@+id/modeGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <RadioButton
+                android:id="@+id/headsetModeButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:checked="true"
+                android:text="@string/mode_headset"
+                android:textColor="#FFFFFF" />
+
+            <RadioButton
+                android:id="@+id/webcamModeButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/mode_webcam"
+                android:textColor="#FFFFFF" />
+        </RadioGroup>
+
         <EditText
             android:id="@+id/hostField"
             android:layout_width="match_parent"
@@ -44,6 +68,7 @@
             android:textColorHint="#88FFFFFF" />
 
         <LinearLayout
+            android:id="@+id/headsetFields"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal">
@@ -78,6 +103,16 @@
                 android:textColor="#FFFFFF"
                 android:textColorHint="#88FFFFFF" />
         </LinearLayout>
+
+        <EditText
+            android:id="@+id/cameraPortField"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/camera_port_hint"
+            android:inputType="number"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#88FFFFFF"
+            android:visibility="gone" />
 
         <EditText
             android:id="@+id/tokenField"
@@ -118,6 +153,7 @@
             android:textSize="13sp" />
 
         <TextView
+            android:id="@+id/helpText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"

@@ -39,6 +39,31 @@ def test_synthetic_camera_forces_known_geometry():
     assert any("synthetic camera forces" in warning for warning in warnings)
 
 
+def test_phone_camera_defaults_and_port_collision():
+    config = AppConfig()
+    assert config.phone.camera_enabled is True
+    assert config.phone.camera_port == 8766
+    assert config.phone.camera_bitrate_mbps == pytest.approx(40.0)
+    assert config.phone.camera_timeout_s == pytest.approx(0.5)
+    assert validate_config(config) == []
+
+    config.phone.camera_port = config.phone.video_port
+    warnings = validate_config(config)
+    assert config.phone.camera_enabled is False
+    assert any("phone.camera_port must differ" in warning for warning in warnings)
+
+
+def test_phone_camera_settings_are_clamped():
+    config = AppConfig()
+    config.phone.camera_port = 0
+    config.phone.camera_bitrate_mbps = 500.0
+    config.phone.camera_timeout_s = 0.0
+    validate_config(config)
+    assert config.phone.camera_port == 1
+    assert config.phone.camera_bitrate_mbps == pytest.approx(200.0)
+    assert config.phone.camera_timeout_s == pytest.approx(0.1)
+
+
 def test_comfort_filter_settings_are_clamped():
     config = AppConfig()
     config.tracking.marker_static_noise_scale = 4.0

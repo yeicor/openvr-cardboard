@@ -603,6 +603,21 @@ class SettingsDialog(QDialog):
         self.phone_stream_launch.setChecked(cfg.stream_on_launch)
         self.phone_imu_port = self._spin(cfg.imu_port, 1, 65535)
         self.phone_video_port = self._spin(cfg.video_port, 1, 65535)
+        self.phone_camera_enabled = QCheckBox(
+            "Use a phone camera as the tracking camera while it streams"
+        )
+        self.phone_camera_enabled.setChecked(cfg.camera_enabled)
+        self.phone_camera_port = self._spin(cfg.camera_port, 1, 65535)
+        self.phone_camera_bitrate = self._double(
+            cfg.camera_bitrate_mbps, 1.0, 200.0, " Mbps", 1
+        )
+        self.phone_camera_bitrate.setToolTip(
+            "H.264 upload rate for the phone-as-webcam stream. 40-80 Mbps "
+            "keeps 720p120 crisp; USB tethering has ample bandwidth."
+        )
+        self.phone_camera_timeout = self._double(
+            cfg.camera_timeout_s, 0.1, 10.0, " s", 2
+        )
         self.phone_token = QLineEdit(cfg.token)
         self.phone_token.setPlaceholderText("optional pairing token")
         self.phone_token.setEchoMode(QLineEdit.EchoMode.Password)
@@ -626,6 +641,10 @@ class SettingsDialog(QDialog):
         self.phone_encoder.addItems(["auto", "nvenc", "x264"])
         self.phone_encoder.setCurrentText(cfg.encoder)
         self.phone_bitrate = self._double(cfg.bitrate_mbps, 2.0, 400.0, " Mbps", 1)
+        self.phone_bitrate.setToolTip(
+            "Desktop-to-phone video bitrate. Raise it for quality on USB "
+            "tethering and lower it when the Wi-Fi link is congested."
+        )
         self.phone_keyframe = self._double(cfg.keyframe_interval_s, 0.1, 10.0, " s", 2)
         self.phone_source = QComboBox()
         self.phone_source.addItems(["test", "screen", "camera", "game", "openxr"])
@@ -639,6 +658,10 @@ class SettingsDialog(QDialog):
         form.addRow(self.phone_stream_launch)
         form.addRow("IMU UDP port", self.phone_imu_port)
         form.addRow("Video WebSocket port", self.phone_video_port)
+        form.addRow(self.phone_camera_enabled)
+        form.addRow("Phone camera WebSocket port", self.phone_camera_port)
+        form.addRow("Phone camera bitrate (phone → desktop)", self.phone_camera_bitrate)
+        form.addRow("Phone camera fallback timeout", self.phone_camera_timeout)
         form.addRow("Pairing token", self.phone_token)
         form.addRow("", self.phone_token_show)
         form.addRow("Stereo layout", self.phone_layout)
@@ -646,7 +669,7 @@ class SettingsDialog(QDialog):
         form.addRow("Stream rate", self.phone_fps)
         form.addRow("Video codec", self.phone_codec)
         form.addRow("Encoder backend", self.phone_encoder)
-        form.addRow("Target bitrate", self.phone_bitrate)
+        form.addRow("Target bitrate (desktop → phone)", self.phone_bitrate)
         form.addRow("Keyframe interval", self.phone_keyframe)
         form.addRow("JPEG quality (fallback)", self.phone_quality)
         form.addRow("Capture source", self.phone_source)
@@ -857,6 +880,10 @@ class SettingsDialog(QDialog):
         cfg.phone.stream_on_launch = self.phone_stream_launch.isChecked()
         cfg.phone.imu_port = self.phone_imu_port.value()
         cfg.phone.video_port = self.phone_video_port.value()
+        cfg.phone.camera_enabled = self.phone_camera_enabled.isChecked()
+        cfg.phone.camera_port = self.phone_camera_port.value()
+        cfg.phone.camera_bitrate_mbps = self.phone_camera_bitrate.value()
+        cfg.phone.camera_timeout_s = self.phone_camera_timeout.value()
         cfg.phone.token = self.phone_token.text().strip()
         cfg.phone.layout = self.phone_layout.currentText()
         cfg.phone.width = self.phone_width.value()
