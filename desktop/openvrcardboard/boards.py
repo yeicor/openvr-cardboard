@@ -48,6 +48,21 @@ PERIPHERAL_MARKER_M = DEFAULT_BOARD_PERIPHERAL_M
 PERIPHERAL_X_M = DEFAULT_BOARD_PERIPHERAL_X_M
 PERIPHERAL_Y_M = DEFAULT_BOARD_PERIPHERAL_Y_M
 
+
+def _vec3(values: Iterable[float]) -> tuple[float, float, float]:
+    items = tuple(float(value) for value in values)
+    if len(items) != 3:
+        raise ValueError(f"expected 3 values, got {len(items)}")
+    return items[0], items[1], items[2]
+
+
+def _quat4(values: Iterable[float]) -> tuple[float, float, float, float]:
+    items = tuple(float(value) for value in values)
+    if len(items) != 4:
+        raise ValueError(f"expected 4 values, got {len(items)}")
+    return items[0], items[1], items[2], items[3]
+
+
 # The board is mounted on the front of a device.  Board +Z points out of the
 # printed face (towards the camera); OpenVR device forward is -Z, so the board
 # frame is a half turn around Y relative to the device frame.
@@ -216,12 +231,12 @@ def default_boards(
     for name in BOARDS_NAMES:
         board = default_board(name, None if ids is None else ids.get(name))
         position = (
-            tuple(float(value) for value in object_offsets[name])
+            _vec3(object_offsets[name])
             if object_offsets and name in object_offsets
             else board.object_position
         )
         rotation = (
-            tuple(float(value) for value in object_rotations[name])
+            _quat4(object_rotations[name])
             if object_rotations and name in object_rotations
             else board.object_rotation
         )
@@ -259,8 +274,8 @@ def board_from_config(name: str, first_marker_id: int, config) -> BoardSpec:
         markers=(central, *peripherals),
         width_m=float(config.width_m),
         height_m=float(config.height_m),
-        object_position=tuple(float(value) for value in config.object_position),
-        object_rotation=tuple(float(value) for value in config.object_rotation),
+        object_position=_vec3(config.object_position),
+        object_rotation=_quat4(config.object_rotation),
     )
 
 
@@ -451,9 +466,12 @@ class BoardPoseEstimator:
 
         # Sort IDs for deterministic solving and debug output.
         known = dict(sorted(known.items()))
-        object_points = np.concatenate(
-            [board.marker(marker_id).object_points() for marker_id in known], axis=0
-        )
+        marker_points: list[np.ndarray] = []
+        for marker_id in known:
+            marker = board.marker(marker_id)
+            if marker is not None:
+                marker_points.append(marker.object_points())
+        object_points = np.concatenate(marker_points, axis=0)
         image_points = np.concatenate([known[marker_id] for marker_id in known], axis=0)
         inlier_ids = tuple(known.keys())
         solutions = self._solve(
@@ -502,10 +520,12 @@ class BoardPoseEstimator:
             if len(current_ids) <= 1:
                 break
             current_ids = [value for value in current_ids if value != worst_id]
-            object_subset = np.concatenate(
-                [board.marker(marker_id).object_points() for marker_id in current_ids],
-                axis=0,
-            )
+            subset_points: list[np.ndarray] = []
+            for marker_id in current_ids:
+                marker = board.marker(marker_id)
+                if marker is not None:
+                    subset_points.append(marker.object_points())
+            object_subset = np.concatenate(subset_points, axis=0)
             image_subset = np.concatenate([known[marker_id] for marker_id in current_ids], axis=0)
             subset_solutions = self._solve(
                 cv2, object_subset, image_subset, matrix, distortion, len(current_ids)

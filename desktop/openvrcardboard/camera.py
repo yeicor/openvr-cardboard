@@ -387,9 +387,9 @@ class CameraCapture:
                 if candidate not in sizes:
                     sizes.append(candidate)
         fps_order = [int(fps)] if fps > 0 else [60, 30]
-        for candidate in (60, 30):
-            if candidate < fps_order[0] and candidate not in fps_order:
-                fps_order.append(candidate)
+        for rate in (60, 30):
+            if rate < fps_order[0] and rate not in fps_order:
+                fps_order.append(rate)
         attempts: list[tuple[str, int, int, int]] = []
         for frame_rate in fps_order:
             for candidate_width, candidate_height in sizes:
@@ -821,10 +821,16 @@ class CameraCapture:
                 errors = 0
                 next_frame = time.monotonic()
 
+            capture = self._capture
+            if capture is None:
+                retry_at = time.monotonic() + 0.5
+                self._stop.wait(0.2)
+                continue
+
             started = time.perf_counter()
             frame = None
             try:
-                ok, frame = self._capture.read()
+                ok, frame = capture.read()
             except Exception as exc:
                 ok, frame = False, None
                 with self._lock:
@@ -832,7 +838,7 @@ class CameraCapture:
                 LOGGER.debug("camera read raised: %s", exc)
             elapsed = (time.perf_counter() - started) * 1000.0
             read_time = time.monotonic()
-            pos_msec = self._get_prop(cv2, self._capture, "CAP_PROP_POS_MSEC", 0.0)
+            pos_msec = self._get_prop(cv2, capture, "CAP_PROP_POS_MSEC", 0.0)
 
             if not ok or frame is None:
                 errors += 1

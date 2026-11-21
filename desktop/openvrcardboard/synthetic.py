@@ -448,7 +448,7 @@ class SyntheticScene:
         result: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         for name, board in self.boards.items():
             object_position, object_rotation = poses.get(name, (None, None))
-            if object_position is None:
+            if object_position is None or object_rotation is None:
                 continue
             marker_rotation = normalize(
                 multiply(object_rotation, board.object_quaternion)
@@ -534,7 +534,7 @@ class SyntheticScene:
             if point is not None:
                 cv2.ellipse(
                     frame,
-                    tuple(np.int32(point)),
+                    (int(point[0]), int(point[1])),
                     (34, 15),
                     0,
                     0,
@@ -552,7 +552,7 @@ class SyntheticScene:
             if point is not None:
                 cv2.circle(
                     frame,
-                    tuple(np.int32(point)),
+                    (int(point[0]), int(point[1])),
                     15,
                     (200, 165, 135),
                     -1,
@@ -571,7 +571,7 @@ class SyntheticScene:
         if head_pixel is not None:
             head_depth = self._project(head)[1]
             radius = max(18, int(0.105 * self.model.fx / head_depth))
-            center = tuple(np.int32(head_pixel))
+            center: tuple[int, int] = (int(head_pixel[0]), int(head_pixel[1]))
             cv2.circle(frame, center, radius, (205, 170, 140), -1, cv2.LINE_AA)
             cv2.circle(frame, center, radius, (130, 100, 80), 2, cv2.LINE_AA)
             # Hair and a mouth make the test figure read as a person to the
