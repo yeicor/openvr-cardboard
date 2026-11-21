@@ -27,11 +27,11 @@ follows semantic versioning for the desktop package and the release tags.
 ### Verified
 
 - An Android 17 phone: 1280×720 H.264 camera upload at
-  120 FPS and 40 Mbps over Wi-Fi with zero dropped frames, plus a 720p30
-  fallback when the variable high-speed range was forced.
+  120 FPS and 40 Mbps over Wi-Fi and USB tethering with zero dropped frames,
+  plus a 720p30 fallback when the variable high-speed range was forced.
 - The same phone streamed HEVC 2400×1080 at 90 FPS to the desktop with zero
   dropped frames while sending IMU samples and completing UDP clock sync over
-  Wi-Fi, with and without a pairing token.
+  Wi-Fi and USB tethering, with and without a pairing token.
 
 ## [1.2.0] - 2026-11-21
 
