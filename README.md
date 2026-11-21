@@ -21,16 +21,18 @@ setup for SteamVR and OpenXR:
   rate and displays stereo video from the PC. The desktop fuses phone rotation
   with board position for a 6DoF headset.
 - **Phone camera mode** — the same app can upload its rear camera as 720p120
-  H.264. The desktop uses it as the tracking camera while connected and falls
-  back to the local webcam automatically. USB tethering is recommended for the
-  cleanest link.
+  H.264. The desktop uses it as the tracking camera while connected, releases
+  the local webcam, and reopens it automatically after the phone stops. Each
+  phone camera gets its own persisted chessboard profile. USB tethering is
+  recommended for the cleanest link.
 - **Native SteamVR driver and Monado OpenXR runtime** — the C++17 driver
   creates a virtual HMD, controllers and generic trackers on Linux and Windows.
   On Linux the app also registers a Monado-based OpenXR runtime, so OpenXR
   applications run without SteamVR while Steam games keep using the native
   driver.
 - **Guided chessboard calibration** available from the main window and the
-  settings dialog whenever the camera moves or the lens is refocused.
+  settings dialog whenever the camera moves or the lens is refocused, with
+  separate per-camera profiles for phone camera mode.
 
 The project is independent and unaffiliated with Valve, Google, or any headset
 vendor. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces
@@ -206,8 +208,10 @@ Tracking → Boards**; the app composes the object pose from the board pose.
 
 The result is written to `camera_calibration.json` in the app configuration
 directory and used immediately. Recalibrate whenever the camera moves, the
-focus changes or the resolution changes. A command-line workflow is also
-available:
+focus changes or the resolution changes. With phone camera mode connected, use
+**Tools → Calibrate phone camera…** to store a separate profile keyed by the
+reported phone and Camera2 ID in `phone_calibrations.json`. A command-line
+workflow is also available:
 
 ```bash
 python scripts/calibrate_camera.py --camera 0 --width 1920 --height 1080 \
@@ -401,12 +405,15 @@ used while the app supplies tracking and controllers.
 
 Choose **Camera** in the Android app instead of **Headset**. The phone uploads
 its rear camera to `phone.camera_port` (default `8766`), targeting 1280×720 at
-up to 120 FPS. The desktop keeps the local camera open and switches tracking to
-the phone while frames arrive, then falls back when the phone stops. Both
-directions have independent quality settings: `phone.camera_bitrate_mbps`
-(default 40 Mbps) for the phone upload and `phone.bitrate_mbps` (default
-40 Mbps) for the headset video. USB tethering with internet sharing is the
-recommended link; raise the camera bitrate to 60–80 Mbps on USB.
+up to 120 FPS. Only one camera is kept open: the desktop releases the local
+camera while fresh phone frames arrive and reopens it in the background after
+the phone stops, so expect a short gap on fallback. Both directions have
+independent quality settings: `phone.camera_bitrate_mbps` (default 40 Mbps) for
+the phone upload and `phone.bitrate_mbps` (default 40 Mbps) for the headset
+video. USB tethering with internet sharing is the recommended link; raise the
+camera bitrate to 60–80 Mbps on USB. The app reports its device and Camera2 ID
+so **Tools → Calibrate phone camera…** can keep a separate intrinsics profile
+per phone lens.
 
 ## Controllers and input
 
@@ -618,6 +625,7 @@ archive. Each successful run also publishes one consolidated
 | Phone IMU not seen | PC IP, UDP `39101`, firewall, AP isolation, phone on the same subnet. |
 | Phone video not seen | TCP `8765`, token mismatch, server started, capture source/test pattern. |
 | Phone camera not used | TCP `8766`, token mismatch, **Camera** mode selected, camera permission granted, firewall allows the link. |
+| Phone camera calibration unavailable | update the Android app and reconnect in **Camera** mode after frames start; older apps do not report a camera ID. |
 | Video lag | Use 5 GHz or USB tethering, lower `phone.fps`, `width`/`height` and JPEG quality. |
 | Virtual HMD conflicts with a real headset | Disable `driver.enable_virtual_hmd`. |
 | SteamVR crashes after install | Remove `drivers/openvrcardboard`, restore the backup, and check that the driver architecture matches SteamVR (64-bit). |

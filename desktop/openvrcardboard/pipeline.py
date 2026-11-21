@@ -189,6 +189,7 @@ class TrackingWorker:
         camera_rotation,
         camera: Optional[CameraCapture] = None,
         phone_camera=None,
+        phone_calibrations=None,
     ):
         self.state = state
         self.config = config
@@ -207,6 +208,7 @@ class TrackingWorker:
         )
         self.base_camera = base_camera
         self.phone_camera = phone_camera
+        self.phone_calibrations = phone_calibrations
         self.camera = (
             CameraRouter(
                 base_camera,
@@ -218,7 +220,7 @@ class TrackingWorker:
         )
         self.frames_processed = 0
         self.frames_skipped = 0
-        self._frame_models: dict[tuple[str, int, int, float], CameraModel] = {}
+        self._frame_models: dict[tuple, CameraModel] = {}
 
         self.markers: Optional[BoardTracker] = None
         self.hands: Optional[HandTracker] = None
@@ -374,13 +376,43 @@ class TrackingWorker:
     def _camera_model(self, frame) -> CameraModel:
         """Pick intrinsics for the source that produced ``frame``.
 
-        A phone reports its horizontal FOV during the camera handshake.  Build
-        a pinhole model at the streamed resolution so marker PnP and body
-        scaling do not inherit the local webcam's calibration.  Without a
-        report we keep the configured model, which is already scaled to the
-        frame size by the trackers.
+        A phone can be calibrated per camera key, which is persisted by the
+        desktop and takes precedence over the approximate FOV in its hello
+        message. Both paths build a model at the streamed resolution so marker
+        PnP and body scaling do not inherit the local webcam's calibration.
+        Without either we keep the configured model, which is already scaled
+        to the frame size by the trackers.
         """
         if frame.source == "phone" and self.phone_camera is not None:
+            camera_key = ""
+            getter = getattr(self.phone_camera, "camera_key", None)
+            if callable(getter):
+                try:
+                    camera_key = str(getter() or "")
+                except (TypeError, ValueError):
+                    camera_key = ""
+            if self.phone_calibrations is not None and camera_key:
+                try:
+                    revision = int(self.phone_calibrations.revision)
+                    model = self.phone_calibrations.get(
+                        camera_key, frame.width, frame.height
+                    )
+                except (AttributeError, TypeError, ValueError):
+                    model = None
+                    revision = 0
+                if model is not None:
+                    key = (
+                        "phone-calibrated",
+                        int(frame.width),
+                        int(frame.height),
+                        camera_key,
+                        revision,
+                    )
+                    cached = self._frame_models.get(key)
+                    if cached is not None:
+                        return cached
+                    self._frame_models[key] = model
+                    return model
             try:
                 fov = float(self.phone_camera.horizontal_fov())
             except (AttributeError, TypeError, ValueError):

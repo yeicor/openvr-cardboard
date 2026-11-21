@@ -9,11 +9,16 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from .calibration import camera_model_for_config, camera_pose
+from .calibration import (
+    CameraCalibrationStore,
+    camera_model_for_config,
+    camera_pose,
+)
 from .config import (
     AppConfig,
     config_dir_for,
     load_config,
+    resolve_relative,
     save_config,
     validate_config,
 )
@@ -48,6 +53,14 @@ class Runtime:
         )
         warnings.extend(model_warnings)
         self.camera_position, self.camera_rotation = camera_pose(config.camera)
+        phone_calibration_path = resolve_relative(
+            str(
+                getattr(config.camera, "phone_calibration_file", "")
+                or "phone_calibrations.json"
+            ),
+            self.base_dir,
+        )
+        self.phone_calibrations = CameraCalibrationStore(phone_calibration_path)
 
         self.state = SharedState()
         for warning in warnings:
@@ -86,6 +99,7 @@ class Runtime:
             self.camera_position,
             self.camera_rotation,
             phone_camera=self.phone_camera if config.phone.camera_enabled else None,
+            phone_calibrations=self.phone_calibrations,
         )
         self.fusion = FusionWorker(
             self.state,

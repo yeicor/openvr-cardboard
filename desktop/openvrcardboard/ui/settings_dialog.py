@@ -168,6 +168,11 @@ class SettingsDialog(QDialog):
         self.camera_refine_pose = QCheckBox("Refine board pose with Levenberg–Marquardt")
         self.camera_refine_pose.setChecked(cfg.marker_refine_pose)
         self.camera_calibration = QLineEdit(cfg.calibration_file)
+        self.camera_phone_calibration = QLineEdit(cfg.phone_calibration_file)
+        self.camera_phone_calibration.setToolTip(
+            "Calibrations keyed by the phone's reported camera ID. Use "
+            "Tools → Calibrate phone camera while the phone is streaming."
+        )
         self.camera_calibrate = QPushButton("Calibrate camera…")
         self.camera_calibrate.setToolTip(
             "Run the guided chessboard calibration to measure lens distortion "
@@ -259,6 +264,7 @@ class SettingsDialog(QDialog):
         form.addRow("Max marker reprojection error", self.camera_max_error)
         form.addRow("Calibration file", self.camera_calibration)
         form.addRow("", self.camera_calibrate)
+        form.addRow("Phone calibration store", self.camera_phone_calibration)
         form.addRow("Calibration board inner corners", self._pair(self.camera_board_cols, self.camera_board_rows))
         form.addRow("Calibration square size", self.camera_board_square)
         form.addRow("Minimum calibration views", self.camera_min_views)
@@ -798,6 +804,9 @@ class SettingsDialog(QDialog):
         cfg.camera.marker_refine_pose = self.camera_refine_pose.isChecked()
         cfg.camera.max_reprojection_error = self.camera_max_error.value()
         cfg.camera.calibration_file = self.camera_calibration.text().strip()
+        cfg.camera.phone_calibration_file = (
+            self.camera_phone_calibration.text().strip()
+        )
         cfg.camera.calibration_board_cols = self.camera_board_cols.value()
         cfg.camera.calibration_board_rows = self.camera_board_rows.value()
         cfg.camera.calibration_square_mm = self.camera_board_square.value()

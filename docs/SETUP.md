@@ -371,6 +371,23 @@ app config directory as `camera_calibration.json`, or set
 `camera.calibration_file` to its absolute path. The app scales intrinsics to
 the actual capture resolution automatically.
 
+#### Calibrate the phone camera
+
+Phone-camera intrinsics are stored per camera instead of in the local webcam
+file, so switching phones never overwrites another device's profile. Start the
+desktop with phone camera mode enabled, connect the Android app in **Camera**
+mode, then choose **Tools → Calibrate phone camera…** while the phone is
+streaming. The wizard uses the running phone receiver, reports the detected
+camera name, and stores the result under `phone:<device>:<camera_id>` in
+`camera.phone_calibration_file` (default `phone_calibrations.json` in the app
+config directory). Tracking restarts automatically after the dialog closes and
+picks up the new calibration without rebuilding the runtime.
+
+A stored phone calibration takes precedence over the approximate horizontal
+FOV reported by the app. Calibrate each phone and each rear lens separately;
+the Android app reports the Camera2 ID so profiles remain distinct. Recalibrate
+after changing the phone's focus, zoom or streamed resolution.
+
 ### Calibrate the board-to-object transform
 
 Printing gives the board frame, but the tracked device origin is usually
@@ -451,20 +468,22 @@ rotation.
 Camera mode in the Android app sends the rear camera to the desktop, so the
 phone can replace the webcam while it is connected. In the app choose
 **Camera** instead of **Headset**, set the same host, token and camera port
-(default `8766`), and press **Start**. The desktop keeps its local camera
-running; while fresh phone frames arrive (within `phone.camera_timeout_s`,
-default 0.5 s) the tracking loop uses them, and it returns to the local camera
-as soon as the phone stops. No desktop restart or extra pairing step is
-needed.
+(default `8766`), and press **Start**. Only the active camera stays open: while
+fresh phone frames arrive (within `phone.camera_timeout_s`, default 0.5 s) the
+tracking loop uses them and releases the local camera, and when the phone stops
+the desktop reopens its local camera in the background. There can be a short
+tracking gap while that device opens; no desktop restart or extra pairing step
+is needed.
 
 The phone targets 1280×720 at up to 120 FPS, using Camera2 constrained
 high-speed capture when the device exposes it. Quality is the priority:
 `phone.camera_bitrate_mbps` (default 40 Mbps) controls the phone upload, and
 `phone.bitrate_mbps` (default 40 Mbps) controls the desktop-to-phone headset
 stream. Raise either on USB tethering or a clean 5 GHz link. The phone reports
-its horizontal FOV during the handshake so marker PnP uses the phone's
-intrinsics; mount the phone close to where the webcam was, because the
-configured camera position and rotation still define the play-space origin.
+its horizontal FOV and camera ID during the handshake; a **Tools → Calibrate
+phone camera…** profile takes precedence over the FOV estimate. Mount the phone
+close to where the webcam was, because the configured camera position and
+rotation still define the play-space origin.
 The desktop decodes the upload with ffmpeg (ffmpeg 5.1 or newer); the `[all]`
 install and the portable packages include it, and camera mode falls back to the
 local webcam if ffmpeg is missing.
@@ -496,7 +515,8 @@ older single-marker or body-marker settings.
 | | `autofocus true`, `auto_exposure true`, `auto_white_balance true` | Manual control when disabled |
 | | `auto_marker_control true`, `camera_aggressiveness 0.5`, `camera_target_brightness 0.52`, `camera_max_gain 64` | Marker-aware exposure/gain loop; disable for fully manual control |
 | | `camera_timestamp_source auto`, `camera_timestamp_offset_ms 0` | `POS_MSEC`/read timestamp source and exposure-start correction |
-| | `horizontal_fov_deg 60`, `calibration_file camera_calibration.json` | Intrinsics fallback/override |
+| | `horizontal_fov_deg 60`, `calibration_file camera_calibration.json` | Local-camera intrinsics fallback/override |
+| | `phone_calibration_file phone_calibrations.json` | Per-phone-camera profiles keyed by device and Camera2 ID |
 | | `position [0,1.5,-1.5]`, `rotation [0,1,0,0]` | Camera pose in play space |
 | | `dictionary DICT_3X3_15`, `marker_detection_width 0` | Board dictionary and full-resolution detection |
 | | `marker_refine_pose true`, `max_reprojection_error 4.0` | LM refinement and outlier rejection threshold |

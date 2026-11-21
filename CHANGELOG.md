@@ -3,7 +3,7 @@
 All notable changes to OpenVR Cardboard are documented here. The project
 follows semantic versioning for the desktop package and the release tags.
 
-## [Unreleased]
+## [1.2.0] - 2026-11-21
 
 ### Added
 
@@ -12,9 +12,14 @@ follows semantic versioning for the desktop package and the release tags.
   Camera2 constrained high-speed capture when available.
 - Desktop phone-camera receiver and ffmpeg decoder with token authentication,
   keyframe recovery, replacement handling and drop statistics.
-- `CameraRouter` keeps the local camera running and uses fresh phone frames
-  while they arrive, falling back to the local camera after
-  `phone.camera_timeout_s`.
+- Per-phone-camera chessboard calibration. The Android handshake reports the
+  device and Camera2 camera ID; **Tools → Calibrate phone camera…** stores each
+  lens under `phone:<device>:<camera_id>` in `camera.phone_calibration_file`
+  (default `phone_calibrations.json`). A stored profile takes precedence over
+  the reported FOV.
+- `CameraRouter` uses fresh phone frames while they arrive and releases the
+  local camera, reopening it on a background thread after
+  `phone.camera_timeout_s`. Only the active camera is kept open.
 - Separate quality controls for both directions: `phone.camera_bitrate_mbps`
   for the phone upload and `phone.bitrate_mbps` for the headset stream.
 - The phone reports its approximate horizontal FOV so marker PnP and body
@@ -27,6 +32,12 @@ follows semantic versioning for the desktop package and the release tags.
 - USB tethering with internet sharing is documented as the recommended
   phone-to-desktop link for camera mode and 720p120.
 - Camera-mode bitrate defaults to 40 Mbps, with 60–80 Mbps recommended on USB.
+- Phone camera switching is no longer instantaneous: the local camera is
+  released while the phone is active and reopened in the background on
+  fallback, trading a short tracking gap for exclusive device access.
+- Phone calibration entries are merged atomically, so calibrating one camera
+  never overwrites another device's profile; corrupt stores are moved aside
+  before a new entry is written.
 
 ### Fixed
 
@@ -39,6 +50,8 @@ follows semantic versioning for the desktop package and the release tags.
   piped H.264 stream.
 - Camera mode validates the camera port before saving settings and clears a
   pending permission start when the mode changes.
+- Camera mode reports the selected Camera2 ID in its status line so the lens
+  used for a calibration is unambiguous.
 
 ## [1.1.0] - 2026-11-19
 
@@ -90,5 +103,6 @@ follows semantic versioning for the desktop package and the release tags.
   gamepad controllers, phone HMD streaming, native OpenVR driver, bundled
   Monado OpenXR runtime and portable Linux/Windows packages.
 
+[1.2.0]: https://github.com/yeicor/openvr-cardboard/releases/tag/v1.2.0
 [1.1.0]: https://github.com/yeicor/openvr-cardboard/releases/tag/v1.1.0
 [1.0.0]: https://github.com/yeicor/openvr-cardboard/commit/d3bbdf0

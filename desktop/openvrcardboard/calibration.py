@@ -11,7 +11,11 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
+import threading
+import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -148,6 +152,189 @@ class CameraModel:
         if model.width <= 0 or model.height <= 0:
             model = cls(width, height, model.fx, model.fy, model.cx, model.cy, model.distortion)
         return model.scaled(width, height)
+
+
+CALIBRATION_STORE_VERSION = 1
+
+
+class CameraCalibrationStore:
+    """Persist intrinsics keyed by a stable camera identifier.
+
+    Phone cameras come and go and their Camera2 IDs are only meaningful on
+    one device, so a single calibration file would make one phone overwrite
+    another. This store keeps a JSON object per ``camera_key`` (the Android
+    app reports the device and camera ID). Entries are merged and replaced
+    atomically, and a corrupt file is moved aside before a new calibration is
+    written instead of being silently overwritten.
+    """
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path).expanduser()
+        self._lock = threading.RLock()
+        self._entries: dict[str, dict] = {}
+        self._mtime_ns: Optional[int] = None
+        self._loaded = False
+        self._revision = 0
+        self._parse_error = ""
+
+    @property
+    def revision(self) -> int:
+        """Monotonic counter that changes when the store content changes."""
+        with self._lock:
+            self._refresh_locked()
+            return self._revision
+
+    def get(
+        self, camera_key: str, width: int, height: int
+    ) -> Optional[CameraModel]:
+        """Return the calibration for ``camera_key`` scaled to the frame."""
+        if not camera_key:
+            return None
+        with self._lock:
+            self._refresh_locked()
+            entry = self._entries.get(str(camera_key))
+            if entry is None:
+                return None
+            try:
+                model = CameraModel.from_dict(entry)
+            except (KeyError, TypeError, ValueError) as exc:
+                LOGGER.warning(
+                    "ignoring invalid calibration for %s in %s: %s",
+                    camera_key,
+                    self.path,
+                    exc,
+                )
+                return None
+            return model.scaled(width, height)
+
+    def save(
+        self,
+        camera_key: str,
+        model: CameraModel,
+        name: str = "",
+    ) -> Path:
+        """Store one camera's calibration without disturbing the others."""
+        key = str(camera_key or "").strip()
+        if not key:
+            raise ValueError("camera key is empty")
+        with self._lock:
+            self._refresh_locked()
+            if self._parse_error and self.path.exists():
+                self._backup_corrupt_locked()
+            entry = model.to_dict()
+            entry["camera_key"] = key
+            entry["name"] = str(name or "").strip()
+            entry["saved_at"] = datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            )
+            self._entries[key] = entry
+            self._write_locked()
+            self._revision += 1
+            return self.path
+
+    def _refresh_locked(self) -> None:
+        try:
+            mtime_ns = self.path.stat().st_mtime_ns
+        except OSError:
+            if self._loaded and self._mtime_ns is not None:
+                self._entries = {}
+                self._mtime_ns = None
+                self._revision += 1
+            self._loaded = True
+            return
+        if self._loaded and mtime_ns == self._mtime_ns:
+            return
+        self._load_locked(mtime_ns)
+
+    def _load_locked(self, mtime_ns: int) -> None:
+        try:
+            values = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            self._parse_error = f"could not read {self.path}: {exc}"
+            LOGGER.warning("%s", self._parse_error)
+            self._entries = {}
+            self._mtime_ns = mtime_ns
+            self._loaded = True
+            return
+        if not isinstance(values, dict):
+            self._parse_error = f"calibration store root is not an object: {self.path}"
+            LOGGER.warning("%s", self._parse_error)
+            self._entries = {}
+            self._mtime_ns = mtime_ns
+            self._loaded = True
+            return
+        try:
+            version = int(values.get("version", CALIBRATION_STORE_VERSION))
+        except (TypeError, ValueError):
+            version = 0
+        if version != CALIBRATION_STORE_VERSION:
+            self._parse_error = (
+                f"unsupported calibration store version {version} in {self.path}"
+            )
+            LOGGER.warning("%s", self._parse_error)
+            self._entries = {}
+            self._mtime_ns = mtime_ns
+            self._loaded = True
+            return
+        cameras = values.get("cameras", {})
+        entries: dict[str, dict] = {}
+        if isinstance(cameras, dict):
+            for key, entry in cameras.items():
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    CameraModel.from_dict(entry)
+                except (KeyError, TypeError, ValueError) as exc:
+                    LOGGER.warning(
+                        "ignoring invalid calibration for %s in %s: %s",
+                        key,
+                        self.path,
+                        exc,
+                    )
+                    continue
+                entries[str(key)] = dict(entry)
+        self._entries = entries
+        self._parse_error = ""
+        self._mtime_ns = mtime_ns
+        self._loaded = True
+        self._revision += 1
+
+    def _backup_corrupt_locked(self) -> None:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
+        try:
+            self.path.replace(backup)
+            LOGGER.warning(
+                "moved unreadable calibration store %s to %s", self.path, backup
+            )
+        except OSError as exc:
+            LOGGER.warning(
+                "could not back up unreadable calibration store %s: %s",
+                self.path,
+                exc,
+            )
+        self._entries = {}
+        self._parse_error = ""
+        self._mtime_ns = None
+
+    def _write_locked(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": CALIBRATION_STORE_VERSION,
+            "cameras": self._entries,
+        }
+        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, self.path)
+        try:
+            self._mtime_ns = self.path.stat().st_mtime_ns
+        except OSError:
+            self._mtime_ns = None
+        self._loaded = True
+        self._parse_error = ""
 
 
 def camera_model_for_config(

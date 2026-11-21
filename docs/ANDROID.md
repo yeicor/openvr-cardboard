@@ -33,7 +33,7 @@ USB tethering with internet sharing is the recommended link.
 The project uses Android Gradle Plugin 9.5.1, Gradle 9.9.1 and AGP 9's built-in
 Kotlin support, so there is no separate `org.jetbrains.kotlin.android` plugin to
 install or version. `compileSdk`/`targetSdk` are 37, `minSdk` is 26, and the app
-version is `1.1.0` (`versionCode 3`).
+version is `1.2.0` (`versionCode 4`).
 
 ## Build
 
@@ -180,18 +180,25 @@ The encoder runs in CBR (falling back to VBR if the encoder rejects CBR), keeps
 one keyframe per second and sends Annex-B access units. Only the newest frames
 are queued; when the socket falls behind, the queue is cleared and the app asks
 the encoder for a keyframe so the desktop decoder never receives a broken
-reference chain. The status line shows the selected resolution, frame rate,
-bitrate and sensor rotation.
+reference chain. The status line shows the Camera2 ID, selected resolution,
+frame rate, bitrate and sensor rotation.
 
-Camera mode reuses the same host, token and preferences as headset mode. The
-desktop keeps its local camera open and switches to the phone automatically
-while fresh frames arrive. Stop the stream on the phone, or switch back to
-**Headset**, to make the desktop fall back to its local camera.
+Camera mode reuses the same host, token and preferences as headset mode. Only
+the active camera stays open: while the phone streams fresh frames, the desktop
+releases its local camera; when the stream stops, the desktop reopens the local
+camera in the background. Stop the stream on the phone, or switch back to
+**Headset**, to release the phone camera and let the desktop fall back (with a
+short gap while the local device opens).
 
-The phone reports an approximate horizontal FOV from its focal length and
-sensor size. Keep the phone near the webcam's position and orientation; the
-configured `camera.position` and `camera.rotation` still define where the
-tracking camera sits in play space.
+The app reports its device name, Camera2 camera ID and a human-readable camera
+name in the handshake, next to an approximate horizontal FOV derived from the
+lens focal length and sensor size. The ID lets the desktop keep a separate
+chessboard calibration per phone camera in `camera.phone_calibration_file`
+(default `phone_calibrations.json`); a stored profile takes precedence over the
+reported FOV. Run **Tools → Calibrate phone camera…** on the desktop while the
+phone is streaming in Camera mode. Keep the phone near the webcam's position
+and orientation; the configured `camera.position` and `camera.rotation` still
+define where the tracking camera sits in play space.
 
 For 720p120, use USB tethering with **USB tethering internet sharing** enabled
 and enter the tether adapter's desktop address. Raise
@@ -298,7 +305,8 @@ connects but no frame appears, check TCP `8765` and the selected capture source.
 | Tracking drifts sideways | phone IMU is orientation-only; add a marker or recenter |
 | View is rotated | current display rotation is sent live; make sure the phone is not locked in a fixed orientation |
 | Camera mode says permission denied | grant the camera permission in Android app settings, then Start again |
-| Camera stream connects but the desktop still uses the local camera | check TCP `8766`, token, Camera mode selected; the desktop falls back after `phone.camera_timeout_s` without fresh frames |
+| Camera stream connects but the desktop still uses the local camera | check TCP `8766`, token, Camera mode selected; the desktop switches after fresh frames and falls back after `phone.camera_timeout_s` without them |
+| Phone camera calibration is not offered | update the Android app, connect in Camera mode and wait for frames; older apps do not report a camera ID, so the desktop keeps using the reported FOV |
 | Camera mode drops frames | use USB tethering, lower `phone.camera_bitrate_mbps`, or accept a lower camera frame rate; check `frames_skipped` in the desktop status |
 | Decode/display FPS below 90 | lower `phone.width`/`height`, lower `jpeg_quality`, use 5 GHz Wi-Fi, check that the panel actually offers a 90 Hz mode, and let `phone.codec=auto` use the hardware decoder |
 | `Switching to JPEG` message | the phone has no decoder for the negotiated codec or its decoder rejected the stream; this is expected on older devices and reduces bandwidth/quality rather than breaking video |

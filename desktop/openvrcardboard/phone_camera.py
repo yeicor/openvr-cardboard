@@ -47,6 +47,20 @@ _MAX_FRAME_BYTES = 8 << 20
 _QUEUE_DEPTH = 120
 
 
+def camera_key_for_info(info: dict) -> str:
+    """Build a stable calibration key from a ``camera_hello`` payload.
+
+    The Camera2 ID is only unique within one phone, so the key includes the
+    device name reported by the app. Older apps that do not send a camera ID
+    return an empty key and keep using the FOV estimate.
+    """
+    camera_id = str(info.get("camera_id", "") or "").strip()
+    if not camera_id:
+        return ""
+    device = str(info.get("device", "") or info.get("name", "") or "phone").strip()
+    return f"phone:{device}:{camera_id}"
+
+
 class PhoneCameraError(RuntimeError):
     """Raised when the phone camera server cannot start."""
 
@@ -364,6 +378,9 @@ class PhoneCameraReceiver:
         self._address = ""
         self._info: dict = {}
         self._horizontal_fov_deg = 0.0
+        self._camera_id = ""
+        self._camera_key = ""
+        self._camera_name = ""
 
         self._client_lock = threading.Lock()
         self._connection: Optional[Any] = None
@@ -388,6 +405,21 @@ class PhoneCameraReceiver:
         """Reported phone camera horizontal FOV in degrees (0 when unknown)."""
         with self._lock:
             return float(self._horizontal_fov_deg)
+
+    def camera_id(self) -> str:
+        """Camera2 ID reported by the connected phone (empty when unknown)."""
+        with self._lock:
+            return self._camera_id
+
+    def camera_key(self) -> str:
+        """Stable calibration key for the connected phone camera."""
+        with self._lock:
+            return self._camera_key
+
+    def camera_name(self) -> str:
+        """Human-readable name for the connected phone camera."""
+        with self._lock:
+            return self._camera_name
 
     def start(self, timeout: float = 5.0) -> None:
         if self._running:
@@ -533,6 +565,9 @@ class PhoneCameraReceiver:
             self._last_frame_time = 0.0
             self._info = {}
             self._horizontal_fov_deg = 0.0
+            self._camera_id = ""
+            self._camera_key = ""
+            self._camera_name = ""
         self._send_json(
             {
                 "type": "camera_welcome",
@@ -574,6 +609,9 @@ class PhoneCameraReceiver:
                     self._frame = None
                     self._info = {}
                     self._horizontal_fov_deg = 0.0
+                    self._camera_id = ""
+                    self._camera_key = ""
+                    self._camera_name = ""
             try:
                 connection.close()
             except Exception:
@@ -606,6 +644,13 @@ class PhoneCameraReceiver:
             with self._lock:
                 self._info = info
                 self._horizontal_fov_deg = fov
+                self._camera_id = str(payload.get("camera_id", "") or "").strip()
+                self._camera_key = camera_key_for_info(info)
+                self._camera_name = str(
+                    payload.get("camera_name", "")
+                    or payload.get("name", "")
+                    or "phone camera"
+                ).strip()
                 self._requested_width = as_int("width")
                 self._requested_height = as_int("height")
                 self._requested_fps = as_int("fps")
@@ -756,6 +801,20 @@ class PhoneCameraReceiver:
         with self._lock:
             return self._frame
 
+    def latest_copy(self) -> Optional[CameraFrame]:
+        with self._lock:
+            frame = self._frame
+        if frame is None:
+            return None
+        return CameraFrame(
+            image=frame.image.copy(),
+            timestamp=frame.timestamp,
+            sequence=frame.sequence,
+            width=frame.width,
+            height=frame.height,
+            source=frame.source,
+        )
+
     def frame_if_active(self, timeout: Optional[float] = None) -> Optional[CameraFrame]:
         with self._lock:
             frame = self._frame
@@ -816,6 +875,9 @@ class PhoneCameraReceiver:
                 "running": self._running,
                 "connected": connected,
                 "address": address,
+                "camera_id": self._camera_id,
+                "camera_key": self._camera_key,
+                "camera_name": self._camera_name,
                 "port": self._local_port,
                 "width": width,
                 "height": height,

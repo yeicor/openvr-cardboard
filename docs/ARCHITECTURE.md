@@ -103,6 +103,17 @@ A pinhole model with the configured `horizontal_fov_deg` is used when no
 `camera_calibration.json` exists. A real calibration (intrinsics + distortion)
 substantially improves marker depth and off-centre accuracy.
 
+Phone frames use a separate, keyed calibration store. The Android handshake
+reports `device` and the Camera2 `camera_id`; `CameraCalibrationStore` persists
+one model per `phone:<device>:<camera_id>` in
+`camera.phone_calibration_file`, merging entries atomically and moving a
+corrupt file aside before rewriting it. `TrackingWorker` resolves intrinsics in
+this order: stored phone calibration scaled to the streamed resolution,
+reported `hfov_deg`, then the local camera model. The calibration wizard writes
+through the runtime's shared store, so a new profile is picked up by the
+tracking worker (which also uses the store revision in its model cache key)
+without rebuilding the runtime.
+
 ### Board frame
 
 A five-marker board is solved with one PnP problem over all its detected

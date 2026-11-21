@@ -374,6 +374,12 @@ class CameraStreamer(
                     .put("type", "camera_hello")
                     .put("protocol", 1)
                     .put("name", "${Build.MANUFACTURER} ${Build.MODEL}")
+                    .put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+                    .put("camera_id", cameraId)
+                    .put(
+                        "camera_name",
+                        "${Build.MANUFACTURER} ${Build.MODEL} rear camera",
+                    )
                     .put("width", selectedWidth)
                     .put("height", selectedHeight)
                     .put("fps", selectedFps)
@@ -386,7 +392,7 @@ class CameraStreamer(
         } catch (_: Exception) {
         }
         listener.onCameraStatus(
-            "Camera $selectedWidth×$selectedHeight @ $selectedFps fps " +
+            "Camera $cameraId: $selectedWidth×$selectedHeight @ $selectedFps fps " +
                 "(${bitrateMbps.toInt()} Mbps, rotation $sensorRotation°)",
         )
     }

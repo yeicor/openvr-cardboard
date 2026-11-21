@@ -928,31 +928,68 @@ class CameraCapture:
 
 
 class CameraRouter:
-    """Prefer a connected phone camera and fall back to the local capture.
+    """Route tracking between a fresh phone stream and the local capture.
 
-    The local camera keeps running while the phone streams so switching back
-    is immediate, and the first phone frame replaces it without restarting the
-    tracking worker. A phone that stops sending frames is treated as gone
-    after ``timeout_s``; the next call returns the local frame again.
+    Only the active source is kept open. While fresh phone frames arrive the
+    local camera is stopped, releasing the USB/device resources it holds. When
+    the phone goes stale, the router reopens the local camera on a background
+    manager thread so the capture loop never blocks on device startup. The
+    previous instant fallback was deliberately removed: a short gap while the
+    local camera reopens is cheaper than keeping two cameras running.
     """
 
     def __init__(self, base: CameraCapture, phone=None, timeout_s: float = 0.5):
         self.base = base
         self.phone = phone
         self.timeout_s = max(0.05, float(timeout_s))
-        self._phone_active = False
         self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._base_lock = threading.Lock()
+        self._running = False
+        self._phone_active = False
+        self._want_local: Optional[bool] = None
+        self._thread: Optional[threading.Thread] = None
 
     @property
     def running(self) -> bool:
-        return self.base.running
+        with self._lock:
+            return self._running
 
     def start(self) -> None:
-        self.base.start()
+        with self._lock:
+            if self._running:
+                return
+            self._running = True
+            self._phone_active = False
+            # Wait for the first latest() call before choosing a source, so a
+            # phone that is already streaming never opens the local camera.
+            self._want_local = None
+        self._stop.clear()
+        self._wake.clear()
+        thread = threading.Thread(
+            target=self._manage_loop,
+            name="openvrcardboard-camera-router",
+            daemon=True,
+        )
+        with self._lock:
+            self._thread = thread
+        thread.start()
+        LOGGER.info("camera router started")
 
     def stop(self) -> None:
-        # The phone receiver is owned by the runtime and may outlive tracking.
-        self.base.stop()
+        with self._lock:
+            self._running = False
+            self._phone_active = False
+            self._want_local = None
+            thread = self._thread
+            self._thread = None
+        self._stop.set()
+        self._wake.set()
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=3.0)
+        self._stop_base()
+        LOGGER.info("camera router stopped")
 
     def __enter__(self) -> "CameraRouter":
         self.start()
@@ -960,6 +997,35 @@ class CameraRouter:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.stop()
+
+    def _manage_loop(self) -> None:
+        while not self._stop.is_set():
+            with self._lock:
+                want_local = self._want_local
+            if want_local is True:
+                self._start_base()
+            elif want_local is False:
+                self._stop_base()
+            self._wake.wait(0.1)
+            self._wake.clear()
+
+    def _start_base(self) -> None:
+        with self._base_lock:
+            if self._stop.is_set() or getattr(self.base, "running", False):
+                return
+            try:
+                self.base.start()
+            except Exception:
+                LOGGER.exception("could not reopen the local camera")
+
+    def _stop_base(self) -> None:
+        with self._base_lock:
+            if not getattr(self.base, "running", False):
+                return
+            try:
+                self.base.stop()
+            except Exception:
+                LOGGER.exception("could not release the local camera")
 
     def _phone_frame(self) -> Optional[CameraFrame]:
         if self.phone is None:
@@ -977,12 +1043,17 @@ class CameraRouter:
         if frame is not None:
             with self._lock:
                 self._phone_active = True
+                self._want_local = False
+            self._wake.set()
             return frame
+
         with self._lock:
             was_active = self._phone_active
             self._phone_active = False
+            self._want_local = True
+        self._wake.set()
         if was_active:
-            LOGGER.info("phone camera stopped; resuming local camera")
+            LOGGER.info("phone camera stopped; reopening the local camera")
         return self.base.latest()
 
     def latest_copy(self) -> Optional[CameraFrame]:

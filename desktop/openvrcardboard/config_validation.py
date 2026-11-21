@@ -178,6 +178,10 @@ def validate_config(config: AppConfig) -> list[str]:
     cfg.camera.max_reprojection_error = _clamp(cfg.camera.max_reprojection_error, 0.1, 100.0, float)
     cfg.camera.mirror_preview = bool(cfg.camera.mirror_preview)
     cfg.camera.horizontal_fov_deg = _clamp(cfg.camera.horizontal_fov_deg, 10.0, 150.0, float)
+    cfg.camera.phone_calibration_file = (
+        str(cfg.camera.phone_calibration_file or "").strip()
+        or "phone_calibrations.json"
+    )
     cfg.camera.calibration_board_cols = int(
         _clamp(cfg.camera.calibration_board_cols, 3, 20, int)
     )

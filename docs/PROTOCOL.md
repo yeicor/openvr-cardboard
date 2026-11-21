@@ -380,14 +380,19 @@ authenticated connection replaces the old one.
 `camera_hello` (phone → desktop):
 
 ```json
-{"type":"camera_hello","protocol":1,"name":"Example Phone","width":1280,"height":720,"fps":120,"codec":"h264","rotation":90,"hfov_deg":66.5,"bitrate_mbps":40.0}
+{"type":"camera_hello","protocol":1,"name":"Example Phone","device":"Example Phone","camera_id":"0","camera_name":"Example Phone rear camera","width":1280,"height":720,"fps":120,"codec":"h264","rotation":90,"hfov_deg":66.5,"bitrate_mbps":40.0}
 ```
 
-`bitrate_mbps` on the phone is advisory. `hfov_deg` is optional; when present
-and between 10° and 150° the desktop uses it to build the pinhole camera model
-for marker and body tracking at the streamed resolution instead of assuming
-the local webcam's calibration. `camera_stats` messages are accepted for
-logging, and `ping` is answered with `pong`.
+`bitrate_mbps` on the phone is advisory. `device` and `camera_id` identify the
+Camera2 device and lens; together they form the stable calibration key
+`phone:<device>:<camera_id>`. `camera_name` is a human-readable label used in
+the calibration dialog. Older apps that omit `camera_id` keep using the FOV
+estimate and cannot be calibrated per camera. `hfov_deg` is optional; when
+present and between 10° and 150° the desktop uses it to build the pinhole
+camera model for marker and body tracking at the streamed resolution instead
+of assuming the local webcam's calibration. A stored calibration for the
+camera key takes precedence over `hfov_deg`. `camera_stats` messages are
+accepted for logging, and `ping` is answered with `pong`.
 
 ### 9.1 Binary camera frame
 
@@ -414,12 +419,20 @@ error, so a lost reference frame does not permanently corrupt the picture.
 
 ### 9.2 Tracking integration
 
-The desktop keeps its local camera running while the phone stream is active.
-`CameraRouter` serves a phone frame only while one arrived within
-`phone.camera_timeout_s` (default 0.5 s); otherwise it returns the newest local
-frame. This makes a phone disconnect fall back immediately without restarting
-the tracking worker. The router's statistics expose the active source, phone
-connection state and dropped frame counts.
+Only the active camera is kept open. `CameraRouter` serves a phone frame while
+one arrived within `phone.camera_timeout_s` (default 0.5 s); while fresh phone
+frames arrive it stops the local camera, releasing the USB/device resources it
+holds. When the phone goes stale, the router reopens the local camera on a
+background thread so the tracking loop is not blocked by device startup. There
+is a short tracking gap while the local camera reopens; switching back to the
+phone releases the local camera again. The router's statistics expose the
+active source, phone connection state and dropped frame counts.
+
+Phone intrinsics are resolved in this order: a stored calibration for the
+reported `phone:<device>:<camera_id>` key (scaled to the streamed resolution),
+then the reported `hfov_deg`, then the local camera model. Stored calibrations
+live in `camera.phone_calibration_file` (default `phone_calibrations.json`) and
+are written by **Tools → Calibrate phone camera…**.
 
 ## 10. Configuration files
 

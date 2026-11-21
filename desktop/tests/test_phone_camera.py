@@ -54,18 +54,25 @@ class FakeBaseCamera:
         self.frame = frame
         self.reports: list[tuple[int, int]] = []
         self.config = type("Config", (), {"source": "webcam"})()
+        self.running = False
+        self.starts = 0
+        self.stops = 0
 
-    @property
-    def running(self) -> bool:
-        return True
+    def start(self) -> None:
+        self.running = True
+        self.starts += 1
+
+    def stop(self) -> None:
+        self.running = False
+        self.stops += 1
 
     def latest(self):
-        return self.frame
+        return self.frame if self.running else None
 
     def stats(self) -> CameraStats:
         return CameraStats(
-            running=True,
-            opened=True,
+            running=self.running,
+            opened=self.running,
             fps=60.0,
             frame_ms=2.0,
             width=self.frame.width,
@@ -79,10 +86,22 @@ class FakeBaseCamera:
 
 
 class FakePhoneCamera:
-    def __init__(self, frame: CameraFrame, fov: float = 0.0):
+    def __init__(
+        self,
+        frame: CameraFrame,
+        fov: float = 0.0,
+        camera_key: str = "",
+    ):
         self.frame = frame
         self.connected = True
         self.fov = fov
+        self.camera_key_value = camera_key
+
+    def camera_key(self) -> str:
+        return self.camera_key_value
+
+    def camera_name(self) -> str:
+        return "Fake phone camera"
 
     def frame_if_active(self, timeout=None):
         return self.frame if self.connected else None
@@ -211,6 +230,9 @@ def test_receiver_authenticates_and_decodes_camera_frames(monkeypatch):
                     "fps": 120,
                     "codec": "h264",
                     "hfov_deg": 66.5,
+                    "device": "Test Phone",
+                    "camera_id": "0",
+                    "camera_name": "Test Phone rear camera",
                 }
             )
         )
@@ -222,6 +244,10 @@ def test_receiver_authenticates_and_decodes_camera_frames(monkeypatch):
             time.sleep(0.02)
         assert status["info"]["fps"] == 120
         assert receiver.horizontal_fov() == pytest.approx(66.5)
+        assert receiver.camera_id() == "0"
+        assert receiver.camera_key() == "phone:Test Phone:0"
+        assert receiver.camera_name() == "Test Phone rear camera"
+        assert status["camera_key"] == "phone:Test Phone:0"
 
         packet = pack_camera_frame(
             1, 12.5, 1280, 720, b"\x00\x00\x00\x01\x65frame", keyframe=True
@@ -244,26 +270,52 @@ def test_receiver_authenticates_and_decodes_camera_frames(monkeypatch):
         receiver.stop()
 
 
-def test_camera_router_prefers_phone_and_falls_back():
+def _wait_for(predicate, timeout: float = 2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        value = predicate()
+        if value:
+            return value
+        time.sleep(0.01)
+    return predicate()
+
+
+def test_camera_router_releases_local_camera_and_reopens_it():
     local = make_frame(10, "webcam")
     phone = make_frame(200, "phone")
     base = FakeBaseCamera(local)
     phone_camera = FakePhoneCamera(phone)
     router = CameraRouter(base, phone_camera, timeout_s=0.5)
 
-    frame = router.latest()
-    assert frame is phone
-    assert router.phone_active()
+    try:
+        router.start()
+        # A phone that is already streaming must not open the local camera.
+        frame = router.latest()
+        assert frame is phone
+        assert router.phone_active()
+        assert _wait_for(lambda: not base.running)
+        assert base.starts == 0
 
-    phone_camera.connected = False
-    frame = router.latest()
-    assert frame is local
-    assert not router.phone_active()
+        phone_camera.connected = False
+        frame = _wait_for(router.latest)
+        assert frame is local
+        assert not router.phone_active()
+        assert _wait_for(lambda: base.starts == 1)
+        assert base.running
 
-    copied = router.latest_copy()
-    assert copied is not None and copied is not local
-    copied.image[0, 0, 0] = 99
-    assert local.image[0, 0, 0] == 10
+        phone_camera.connected = True
+        frame = router.latest()
+        assert frame is phone
+        assert _wait_for(lambda: not base.running)
+        assert base.stops == 1
+
+        copied = router.latest_copy()
+        assert copied is not None and copied is not phone
+        copied.image[0, 0, 0] = 99
+        assert phone.image[0, 0, 0] == 200
+    finally:
+        router.stop()
+    assert not base.running
 
 
 def test_camera_router_stats_and_marker_reporting():
@@ -273,22 +325,26 @@ def test_camera_router_stats_and_marker_reporting():
     phone_camera = FakePhoneCamera(phone)
     router = CameraRouter(base, phone_camera)
 
-    router.latest()
-    stats = router.stats()
-    assert stats.source == "phone"
-    assert stats.phone_active
-    assert stats.dropped_frames == 4
-    router.report_marker_detection(5, 10)
-    assert base.reports == []
+    try:
+        router.start()
+        router.latest()
+        stats = router.stats()
+        assert stats.source == "phone"
+        assert stats.phone_active
+        assert stats.dropped_frames == 4
+        router.report_marker_detection(5, 10)
+        assert base.reports == []
 
-    phone_camera.connected = False
-    router.latest()
-    stats = router.stats()
-    assert stats.source == "webcam"
-    assert not stats.phone_active
-    assert not stats.phone_connected
-    router.report_marker_detection(3, 10)
-    assert base.reports == [(3, 10)]
+        phone_camera.connected = False
+        assert _wait_for(router.latest) is local
+        stats = router.stats()
+        assert stats.source == "webcam"
+        assert not stats.phone_active
+        assert not stats.phone_connected
+        router.report_marker_detection(3, 10)
+        assert base.reports == [(3, 10)]
+    finally:
+        router.stop()
 
 
 def test_receiver_replacement_keeps_new_connection_and_decoder(monkeypatch):
@@ -435,6 +491,52 @@ def test_tracking_worker_uses_reported_phone_intrinsics():
         )
         assert worker._camera_model(local) is local_model
         assert worker._camera_model(phone_frame) is phone_model
+    finally:
+        worker.stop()
+
+
+def test_tracking_worker_prefers_stored_phone_calibration(tmp_path):
+    from openvrcardboard.calibration import (
+        CameraCalibrationStore,
+        CameraModel,
+    )
+
+    local = make_frame(10, "webcam")
+    phone_frame = CameraFrame(
+        image=np.zeros((720, 1280, 3), dtype=np.uint8),
+        timestamp=time.monotonic(),
+        sequence=1,
+        width=1280,
+        height=720,
+        source="phone",
+    )
+    store = CameraCalibrationStore(tmp_path / "phone_calibrations.json")
+    store.save(
+        "phone:Test Phone:0",
+        CameraModel(1280, 720, 1010.0, 1020.0, 650.0, 370.0),
+        "Test Phone rear camera",
+    )
+    phone_camera = FakePhoneCamera(
+        make_frame(200, "phone"),
+        fov=70.0,
+        camera_key="phone:Test Phone:0",
+    )
+    worker = TrackingWorker(
+        SharedState(),
+        AppConfig(),
+        CameraModel.estimate(1920, 1080, 60.0),
+        [0.0, 1.5, -1.5],
+        [0.0, 1.0, 0.0, 0.0],
+        camera=FakeBaseCamera(local),
+        phone_camera=phone_camera,
+        phone_calibrations=store,
+    )
+    try:
+        model = worker._camera_model(phone_frame)
+        assert model.fx == pytest.approx(1010.0)
+        assert model.fy == pytest.approx(1020.0)
+        assert model.cx == pytest.approx(650.0)
+        assert model.cy == pytest.approx(370.0)
     finally:
         worker.stop()
 

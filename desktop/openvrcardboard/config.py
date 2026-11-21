@@ -169,6 +169,9 @@ class CameraConfig:
     auto_white_balance: bool = True
     white_balance: float = -1.0
     calibration_file: str = "camera_calibration.json"
+    # Phone cameras are calibrated per reported camera key so switching phones
+    # never overwrites another device's intrinsics.
+    phone_calibration_file: str = "phone_calibrations.json"
     horizontal_fov_deg: float = 60.0
     # Camera pose in play space. Identity rotation looks down -Z with +Y up,
     # matching OpenVR HMD axes. The default camera sits in front of the player

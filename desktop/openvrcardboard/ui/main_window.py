@@ -201,6 +201,9 @@ class MainWindow(QMainWindow):
         calibrate_action = QAction("&Calibrate camera…", self)
         calibrate_action.triggered.connect(self._calibrate_camera)
         tools_menu.addAction(calibrate_action)
+        calibrate_phone_action = QAction("Calibrate &phone camera…", self)
+        calibrate_phone_action.triggered.connect(self._calibrate_phone_camera)
+        tools_menu.addAction(calibrate_phone_action)
         markers_action = QAction("Generate printable &marker boards…", self)
         markers_action.triggered.connect(self._generate_marker_boards)
         tools_menu.addAction(markers_action)
@@ -368,6 +371,19 @@ class MainWindow(QMainWindow):
             return [], f"Camera calibrated ({rms:.2f} px RMS)", notes
 
         self._run_async(action, "Camera calibrated", "Applying calibration…")
+
+    def _calibrate_phone_camera(self) -> None:
+        from .calibration_dialog import calibrate_phone_camera
+
+        rms = calibrate_phone_camera(self.runtime, self)
+        if rms is not None:
+            self.notes.appendPlainText(
+                f"Phone camera calibration saved ({rms:.2f} px RMS)"
+            )
+            self.statusBar().showMessage(
+                f"Phone camera calibrated ({rms:.2f} px RMS)", 5000
+            )
+        self._refresh()
 
     def _generate_marker_boards(self) -> None:
         from ..boards import boards_from_config

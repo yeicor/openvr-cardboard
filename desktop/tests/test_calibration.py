@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from openvrcardboard.calibration import (
+    CameraCalibrationStore,
     CameraModel,
     camera_model_for_config,
     camera_pose,
@@ -87,6 +88,56 @@ def test_model_for_config_loads_file(tmp_path):
     model, warnings = camera_model_for_config(config, tmp_path)
     assert not warnings
     assert model.fx == pytest.approx(500.0)
+
+
+def test_calibration_store_keeps_one_entry_per_camera(tmp_path):
+    path = tmp_path / "phone_calibrations.json"
+    store = CameraCalibrationStore(path)
+    first = CameraModel(1280, 720, 900.0, 910.0, 640.0, 360.0, [0.1, 0.0, 0.0, 0.0, 0.0])
+    second = CameraModel(1280, 720, 1000.0, 1010.0, 650.0, 370.0)
+    store.save("phone:One:0", first, "One rear camera")
+    store.save("phone:Two:1", second, "Two rear camera")
+
+    reloaded = CameraCalibrationStore(path)
+    one = reloaded.get("phone:One:0", 1280, 720)
+    two = reloaded.get("phone:Two:1", 1280, 720)
+    assert one is not None and one.fx == pytest.approx(900.0)
+    assert two is not None and two.fx == pytest.approx(1000.0)
+    assert reloaded.get("phone:Two:1", 640, 360).fx == pytest.approx(500.0)
+
+    values = json.loads(path.read_text())
+    assert values["version"] == 1
+    assert values["cameras"]["phone:One:0"]["name"] == "One rear camera"
+    assert not (tmp_path / "phone_calibrations.json.tmp").exists()
+
+
+def test_calibration_store_reloads_external_changes(tmp_path):
+    path = tmp_path / "phone_calibrations.json"
+    reader = CameraCalibrationStore(path)
+    assert reader.get("phone:Test:0", 1280, 720) is None
+    writer = CameraCalibrationStore(path)
+    writer.save(
+        "phone:Test:0",
+        CameraModel(1280, 720, 950.0, 950.0, 640.0, 360.0),
+    )
+    model = reader.get("phone:Test:0", 640, 360)
+    assert model is not None
+    assert model.fx == pytest.approx(475.0)
+
+
+def test_calibration_store_moves_a_corrupt_file_aside(tmp_path):
+    path = tmp_path / "phone_calibrations.json"
+    path.write_text("{not json", encoding="utf-8")
+    store = CameraCalibrationStore(path)
+    assert store.get("phone:Test:0", 1280, 720) is None
+    store.save(
+        "phone:Test:0",
+        CameraModel(1280, 720, 900.0, 900.0, 640.0, 360.0),
+    )
+    backups = list(tmp_path.glob("phone_calibrations.json.corrupt-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text() == "{not json"
+    assert json.loads(path.read_text())["cameras"]["phone:Test:0"]
 
 
 def test_camera_pose_default_looks_towards_origin():

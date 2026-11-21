@@ -35,7 +35,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..calibration import calibrate_camera_views, detect_chessboard
+from ..calibration import (
+    CameraCalibrationStore,
+    calibrate_camera_views,
+    detect_chessboard,
+)
 from ..camera import CameraCapture
 from ..config import CameraConfig
 
@@ -73,9 +77,15 @@ class CalibrationDialog(QDialog):
         base_dir: Optional[Path] = None,
         output: Optional[str] = None,
         parent: Optional[QWidget] = None,
+        *,
+        source=None,
+        store: Optional[CameraCalibrationStore] = None,
+        camera_key: str = "",
+        camera_name: str = "",
+        waiting_message: str = "",
     ):
         super().__init__(parent)
-        if getattr(config, "source", "webcam") == "synthetic":
+        if source is None and getattr(config, "source", "webcam") == "synthetic":
             raise RuntimeError(
                 "the synthetic camera has known intrinsics and cannot be "
                 "calibrated; switch the camera source to 'webcam' first"
@@ -87,15 +97,29 @@ class CalibrationDialog(QDialog):
         self.output_path = path if path.is_absolute() else self.base_dir / path
         self.views: list[np.ndarray] = []
         self.calibration_file: Optional[Path] = None
+        self.calibration_key = ""
         self.rms_error = 0.0
+        self._store = store
+        self._camera_key = str(camera_key or "").strip()
+        self._camera_name = str(camera_name or "").strip()
+        self._waiting_message = str(waiting_message or "").strip()
+        self._source = source
+        self._owns_source = source is None
         self._last_corners: Optional[np.ndarray] = None
         self._stable_frames = 0
         self._last_capture_time = 0.0
-        self._capture: Optional[CameraCapture] = None
+        self._capture = None
+        self._frame_size = (
+            int(self.config.width),
+            int(self.config.height),
+        )
         self._cv2 = None
         self._shutdown_done = False
 
-        self.setWindowTitle("Camera calibration")
+        title = "Camera calibration"
+        if self._camera_name:
+            title = f"{title} — {self._camera_name}"
+        self.setWindowTitle(title)
         self.resize(860, 620)
         outer = QVBoxLayout(self)
 
@@ -146,7 +170,9 @@ class CalibrationDialog(QDialog):
         outer.addLayout(controls)
 
         status_row = QHBoxLayout()
-        self.status = QLabel("Looking for the chessboard…")
+        self.status = QLabel(
+            self._waiting_message or "Looking for the chessboard…"
+        )
         self.status.setWordWrap(True)
         self.progress = QProgressBar()
         self.progress.setRange(0, max(1, int(self.config.calibration_min_views)))
@@ -185,7 +211,10 @@ class CalibrationDialog(QDialog):
             raise RuntimeError(
                 "camera calibration needs the 'opencv-python' package"
             ) from exc
-        self._capture = CameraCapture(self.config)
+        if self._source is None:
+            self._capture = CameraCapture(self.config)
+        else:
+            self._capture = self._source
         self._capture.start()
 
     # ------------------------------------------------------------------
@@ -196,9 +225,14 @@ class CalibrationDialog(QDialog):
             return
         frame = self._capture.latest_copy()
         if frame is None:
-            stats = self._capture.stats()
-            if stats.last_error:
+            try:
+                stats = self._capture.stats()
+            except Exception:
+                stats = None
+            if stats is not None and stats.last_error:
                 self.status.setText(stats.last_error)
+            elif self._waiting_message:
+                self.status.setText(self._waiting_message)
             return
         image = frame.image
         cv2 = self._cv2
@@ -343,6 +377,28 @@ class CalibrationDialog(QDialog):
             if rms <= 2.0
             else "poor"
         )
+        if self._store is not None and self._camera_key:
+            try:
+                target = self._store.save(
+                    self._camera_key, model, self._camera_name
+                )
+            except (OSError, ValueError) as exc:
+                QMessageBox.critical(
+                    self, "Camera calibration", f"Could not save: {exc}"
+                )
+                return
+            self.calibration_file = target
+            self.calibration_key = self._camera_key
+            self.rms_error = float(rms)
+            label = self._camera_name or self._camera_key
+            QMessageBox.information(
+                self,
+                "Camera calibration",
+                f"Calibration for {label} saved to {target}.\n\n"
+                f"RMS reprojection error: {rms:.2f} px ({quality}).{suffix}",
+            )
+            self.accept()
+            return
         path_text, _ = QFileDialog.getSaveFileName(
             self,
             "Save camera calibration",
@@ -384,9 +440,143 @@ class CalibrationDialog(QDialog):
             return
         self._shutdown_done = True
         self._timer.stop()
-        if self._capture is not None:
+        if self._capture is not None and self._owns_source:
             try:
                 self._capture.stop()
             except Exception:
                 LOGGER.debug("camera stop failed during calibration", exc_info=True)
-            self._capture = None
+        self._capture = None
+
+
+class PhoneCameraCalibrationSource:
+    """Adapter exposing the runtime's phone receiver as a calibration source.
+
+    The receiver is started with the runtime and may keep streaming while
+    tracking is stopped for calibration, so the adapter deliberately does not
+    own or stop it.
+    """
+
+    def __init__(self, receiver):
+        self.receiver = receiver
+
+    def start(self) -> None:
+        return None
+
+    def stop(self) -> None:
+        return None
+
+    def latest_copy(self):
+        return self.receiver.latest_copy()
+
+    def stats(self):
+        return self.receiver.stats()
+
+
+def _as_bool(value) -> bool:
+    try:
+        return bool(value() if callable(value) else value)
+    except Exception:
+        return False
+
+
+def calibrate_phone_camera(runtime, parent: Optional[QWidget] = None) -> Optional[float]:
+    """Run the chessboard wizard against the connected phone camera.
+
+    Returns the RMS reprojection error when a calibration was saved, or
+    ``None`` when the user cancelled or the phone was not ready. The runtime's
+    shared calibration store is updated immediately, so the tracking worker
+    picks up the new intrinsics without rebuilding the runtime.
+    """
+    receiver = getattr(runtime, "phone_camera", None)
+    store = getattr(runtime, "phone_calibrations", None)
+    if receiver is None or store is None:
+        QMessageBox.information(
+            parent,
+            "Calibrate phone camera",
+            "Phone camera support is not available in this build.",
+        )
+        return None
+    if not bool(getattr(runtime.config.phone, "camera_enabled", True)):
+        QMessageBox.information(
+            parent,
+            "Calibrate phone camera",
+            "Enable the phone camera in Settings → Phone video, apply the "
+            "settings, then reconnect the phone in Camera mode.",
+        )
+        return None
+    if not _as_bool(getattr(receiver, "running", False)):
+        QMessageBox.information(
+            parent,
+            "Calibrate phone camera",
+            "The phone camera receiver is not running. Enable phone camera "
+            "mode and restart tracking first.",
+        )
+        return None
+    if not _as_bool(getattr(receiver, "connected", False)):
+        QMessageBox.information(
+            parent,
+            "Calibrate phone camera",
+            "Connect the Android app in Camera mode before calibrating.",
+        )
+        return None
+    get_key = getattr(receiver, "camera_key", None)
+    camera_key = str(get_key() if callable(get_key) else get_key or "").strip()
+    if not camera_key:
+        QMessageBox.information(
+            parent,
+            "Calibrate phone camera",
+            "The connected app did not report its camera ID. Install the "
+            "current Android release and reconnect in Camera mode. Without an "
+            "ID the desktop keeps using the reported field of view.",
+        )
+        return None
+    get_active = getattr(receiver, "active", None)
+    if callable(get_active):
+        try:
+            fresh = bool(get_active(2.0))
+        except TypeError:
+            fresh = _as_bool(get_active)
+    else:
+        fresh = _as_bool(get_active)
+    if not fresh:
+        QMessageBox.information(
+            parent,
+            "Calibrate phone camera",
+            "The phone is connected but not sending frames yet. Wait for the "
+            "camera preview to update, then try again.",
+        )
+        return None
+    get_name = getattr(receiver, "camera_name", None)
+    camera_name = str(get_name() if callable(get_name) else get_name or "").strip()
+    if not camera_name:
+        try:
+            info = receiver.status().get("info", {})
+            camera_name = str(
+                info.get("camera_name") or info.get("name") or ""
+            ).strip()
+        except Exception:
+            camera_name = ""
+    camera_name = camera_name or camera_key
+
+    was_tracking = _as_bool(
+        getattr(getattr(runtime, "tracking", None), "running", False)
+    )
+    if was_tracking:
+        runtime.stop_tracking()
+    try:
+        dialog = CalibrationDialog(
+            runtime.config.camera,
+            base_dir=getattr(runtime, "base_dir", Path.cwd()),
+            parent=parent,
+            source=PhoneCameraCalibrationSource(receiver),
+            store=store,
+            camera_key=camera_key,
+            camera_name=camera_name,
+            waiting_message="Waiting for the phone camera stream…",
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return float(dialog.rms_error)
+    finally:
+        if was_tracking and not _as_bool(runtime.tracking.running):
+            runtime.start_tracking()
