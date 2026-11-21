@@ -2,7 +2,7 @@
 #
 # Usage (from the repository root, in PowerShell):
 #   scripts\build_windows_installer.ps1
-#   scripts\build_windows_installer.ps1 -SourceDir dist\openvrcardboard -Version 1.2.0
+#   scripts\build_windows_installer.ps1 -SourceDir dist\openvrcardboard -Version 1.2.1
 #
 # The portable folder must exist: run scripts\package.py first (CI does this).
 

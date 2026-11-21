@@ -29,11 +29,18 @@ USB tethering with internet sharing is the recommended link.
 - Wi-Fi with the phone and desktop on the same subnet, or USB tethering with
   internet sharing. 5 GHz or USB is strongly recommended because the video
   stream is bandwidth-heavy.
+- On Android 17 or newer, allow the **Nearby devices** prompt. Android 17
+  blocks local-network TCP and UDP for apps targeting API 37 until the
+  `ACCESS_LOCAL_NETWORK` permission is granted; without it both headset and
+  camera connections time out. The app requests the permission when it starts
+  streaming and remembers the answer. Re-enable it under **Settings → Apps →
+  OpenVR Cardboard → Permissions → Nearby devices** if streaming stops
+  working after a denial.
 
 The project uses Android Gradle Plugin 9.5.1, Gradle 9.9.1 and AGP 9's built-in
 Kotlin support, so there is no separate `org.jetbrains.kotlin.android` plugin to
 install or version. `compileSdk`/`targetSdk` are 37, `minSdk` is 26, and the app
-version is `1.2.0` (`versionCode 4`).
+version is `1.2.1` (`versionCode 5`).
 
 ## Build
 
@@ -172,9 +179,12 @@ use, opens the rear camera and connects to
 `ws://<desktop>:<camera-port>/camera?token=…`. It targets 1280×720, picks the
 highest rate up to 120 FPS that both the camera and the H.264 encoder support,
 and uses a Camera2 constrained high-speed session when the device only exposes
-120 FPS there. The desktop's `camera_welcome` bitrate overrides the local
-default, so quality can be tuned from the desktop settings without editing the
-phone.
+120 FPS there. It prefers a fixed high-speed range such as `[120, 120]` over a
+variable one such as `[30, 120]`; if the HAL still rejects the high-speed
+session, the app retries once with a standard capture session instead of
+reconnecting to the same failing mode. The desktop's `camera_welcome` bitrate
+overrides the local default, so quality can be tuned from the desktop settings
+without editing the phone.
 
 The encoder runs in CBR (falling back to VBR if the encoder rejects CBR), keeps
 one keyframe per second and sends Annex-B access units. Only the newest frames
@@ -289,10 +299,12 @@ connects but no frame appears, check TCP `8765` and the selected capture source.
   offset and reorders one sample before rejecting stale or duplicate data; the
   `TIME_PING` exchange remains available for diagnostics and offset candidates.
 - The APK requests `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`,
-  `CAMERA` and `WAKE_LOCK`. The camera permission is requested only when you
-  start **Camera** mode; the app does not request microphone, location or
-  storage permissions. Camera frames are uploaded only after you press Start
-  and are not recorded by the app.
+  `CAMERA`, `ACCESS_LOCAL_NETWORK` and `WAKE_LOCK`. The camera permission is
+  requested only when you start **Camera** mode, and Android 17+ requests the
+  **Nearby devices** permission before the first LAN stream; denying it leaves
+  the status panel showing why the link cannot start. The app does not request
+  microphone, location or storage permissions. Camera frames are uploaded only
+  after you press Start and are not recorded by the app.
 
 ## Troubleshooting
 
@@ -300,7 +312,7 @@ connects but no frame appears, check TCP `8765` and the selected capture source.
 | --- | --- |
 | `No rotation-vector sensor on this phone` | phone lacks the sensor or it is disabled in a custom ROM |
 | `UDP setup failed` | malformed host/port or no network route |
-| `Video link failed` | wrong IP/port, desktop firewall, AP isolation |
+| `Video link failed` | wrong IP/port, desktop firewall, AP isolation, or Android 17 **Nearby devices** permission denied |
 | Video shows but is very dark | headset brightness / capture source; check the test pattern first |
 | Tracking drifts sideways | phone IMU is orientation-only; add a marker or recenter |
 | View is rotated | current display rotation is sent live; make sure the phone is not locked in a fixed orientation |

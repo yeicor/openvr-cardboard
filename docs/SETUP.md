@@ -476,7 +476,10 @@ tracking gap while that device opens; no desktop restart or extra pairing step
 is needed.
 
 The phone targets 1280×720 at up to 120 FPS, using Camera2 constrained
-high-speed capture when the device exposes it. Quality is the priority:
+high-speed capture when the device exposes it, and retries with a standard
+capture session if the HAL rejects the high-speed mode. On Android 17+ allow
+the **Nearby devices** prompt on first start, otherwise LAN access is blocked.
+Quality is the priority:
 `phone.camera_bitrate_mbps` (default 40 Mbps) controls the phone upload, and
 `phone.bitrate_mbps` (default 40 Mbps) controls the desktop-to-phone headset
 stream. Raise either on USB tethering or a clean 5 GHz link. The phone reports

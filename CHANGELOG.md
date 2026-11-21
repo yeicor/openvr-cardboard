@@ -3,6 +3,36 @@
 All notable changes to OpenVR Cardboard are documented here. The project
 follows semantic versioning for the desktop package and the release tags.
 
+## [1.2.1] - 2026-11-21
+
+### Added
+
+- Android 17 local-network permission handling. The app declares and requests
+  `ACCESS_LOCAL_NETWORK` before headset or camera streaming, shows a denial in
+  the status panel, and resumes the pending start after approval. Android 17
+  blocks LAN TCP and UDP for apps targeting API 37 until this permission is
+  granted, which made Wi-Fi and USB-tethering connections time out.
+
+### Fixed
+
+- Camera mode prefers a fixed high-speed FPS range such as `[120, 120]` over a
+  variable range such as `[30, 120]`. Some Camera2 HALs advertise the variable
+  range but reject it with `ERROR_CAMERA_DEVICE`.
+- A rejected constrained high-speed camera session now falls back once to a
+  standard capture session at the best supported rate instead of reconnecting
+  to the same failing mode every two seconds.
+- The camera log now records the selected mode, FPS range and whether it is a
+  high-speed session, making device-specific failures easier to diagnose.
+
+### Verified
+
+- An Android 17 phone: 1280×720 H.264 camera upload at
+  120 FPS and 40 Mbps over Wi-Fi with zero dropped frames, plus a 720p30
+  fallback when the variable high-speed range was forced.
+- The same phone streamed HEVC 2400×1080 at 90 FPS to the desktop with zero
+  dropped frames while sending IMU samples and completing UDP clock sync over
+  Wi-Fi, with and without a pairing token.
+
 ## [1.2.0] - 2026-11-21
 
 ### Added

@@ -8,7 +8,7 @@
 ; ISCC /DAppVersion=1.2.3 /DSourceDir=C:\path\to\dist\openvrcardboard build.iss
 
 #ifndef AppVersion
-  #define AppVersion "1.2.0"
+  #define AppVersion "1.2.1"
 #endif
 
 #ifndef SourceDir

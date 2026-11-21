@@ -9,5 +9,5 @@ The package is split into testable, dependency-light modules:
 * ``gamepad`` - Xbox-style controller input for each hand.
 """
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 APP_NAME = "OpenVR Cardboard"

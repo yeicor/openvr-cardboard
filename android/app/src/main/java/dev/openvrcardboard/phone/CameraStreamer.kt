@@ -91,6 +91,10 @@ class CameraStreamer(
     private val running = AtomicBoolean(false)
     private val pipelineStarted = AtomicBoolean(false)
     private val pipelineGeneration = AtomicLong(0)
+    // Some devices advertise constrained high-speed modes that the camera HAL
+    // cannot actually start (observed as ERROR_CAMERA_DEVICE). Retry with a
+    // standard capture session instead of reconnecting in a loop forever.
+    private val highSpeedDisabled = AtomicBoolean(false)
     private val disconnecting = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private var webSocket: WebSocket? = null
@@ -311,10 +315,20 @@ class CameraStreamer(
         val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?: throw IllegalStateException("camera has no stream configuration")
         val encoderChoice = chooseEncoder(TARGET_WIDTH, TARGET_HEIGHT)
-        val mode = chooseMode(characteristics, map, encoderChoice.maxFps)
+        val mode = chooseMode(
+            characteristics,
+            map,
+            encoderChoice.maxFps,
+            allowHighSpeed = !highSpeedDisabled.get(),
+        )
         selectedWidth = mode.size.width
         selectedHeight = mode.size.height
         selectedFps = mode.fps
+        Log.i(
+            TAG,
+            "camera mode $selectedWidth×$selectedHeight @ $selectedFps fps " +
+                "(highSpeed=${mode.highSpeed}, range=${mode.fpsRange})",
+        )
         listener.onCameraFormat(selectedWidth, selectedHeight, selectedFps)
 
         val (codec, surface) = createEncoder(
@@ -345,8 +359,7 @@ class CameraStreamer(
                 try {
                     createSession(device, surface, mode, generation)
                 } catch (exc: Exception) {
-                    reportError("camera session failed: ${exc.message ?: exc}")
-                    handleDisconnect("camera session failed")
+                    failPipeline(mode, "camera session failed: ${exc.message ?: exc}")
                 }
             }
 
@@ -362,8 +375,7 @@ class CameraStreamer(
                 device.close()
                 if (cameraDevice === device) cameraDevice = null
                 if (!pipelineCurrent(generation)) return
-                reportError("camera error $error")
-                handleDisconnect("camera error")
+                failPipeline(mode, "camera error $error")
             }
         }
         manager.openCamera(cameraId, stateCallback, handler)
@@ -529,6 +541,7 @@ class CameraStreamer(
         characteristics: CameraCharacteristics,
         map: StreamConfigurationMap,
         encoderMaxFps: Int,
+        allowHighSpeed: Boolean,
     ): CameraMode {
         val standardSizes = map.getOutputSizes(SurfaceTexture::class.java)?.toList()
             .orEmpty()
@@ -564,17 +577,22 @@ class CameraStreamer(
         val highSize = highSizes.firstOrNull {
             it.width == TARGET_WIDTH && it.height == TARGET_HEIGHT
         } ?: pickSize(highSizes)
-        if (highSize != null) {
+        if (allowHighSpeed && highSize != null) {
             val highRanges = map.getHighSpeedVideoFpsRangesFor(highSize)?.toList()
                 .orEmpty()
-            // Prefer an exact 120 Hz (or lower) range. Some devices only
-            // publish [120, 240]; running that at 240 would double the
-            // bitrate and defeat the 720p120 target, so stay standard there.
-            val highRange = highRanges
-                .filter {
-                    it.upper <= minOf(120, encoderMaxFps) && it.upper >= 60
-                }
+            // Prefer a fixed range such as [120, 120] over a variable one
+            // such as [30, 120]. Some camera HALs reject the variable range
+            // in a constrained high-speed session with ERROR_CAMERA_DEVICE
+            // even though it is advertised. Some devices only publish
+            // [120, 240]; running that at 240 would double the bitrate and
+            // defeat the 720p120 target, so stay standard there.
+            val usableHigh = highRanges.filter {
+                it.upper <= minOf(120, encoderMaxFps) && it.upper >= 60
+            }
+            val highRange = usableHigh
+                .filter { it.lower == it.upper }
                 .maxByOrNull { it.upper }
+                ?: usableHigh.maxByOrNull { it.upper }
             if (highRange != null && highRange.upper > best.fps) {
                 best = CameraMode(highSize, highRange.upper, highRange, true)
             }
@@ -628,16 +646,14 @@ class CameraStreamer(
                 try {
                     startRepeating(device, session, surface, mode, characteristics)
                 } catch (exc: Exception) {
-                    reportError("could not start camera: ${exc.message ?: exc}")
-                    handleDisconnect("could not start camera")
+                    failPipeline(mode, "could not start camera: ${exc.message ?: exc}")
                 }
             }
 
             override fun onConfigureFailed(session: CameraCaptureSession) {
                 session.close()
                 if (!pipelineCurrent(generation)) return
-                reportError("camera rejected the capture session")
-                handleDisconnect("camera configuration failed")
+                failPipeline(mode, "camera rejected the capture session")
             }
         }
         if (mode.highSpeed) {
@@ -953,6 +969,17 @@ class CameraStreamer(
             thread?.quitSafely()
         }
         codecConfig = ByteArray(0)
+    }
+
+    private fun failPipeline(mode: CameraMode, message: String) {
+        val fallback = mode.highSpeed && highSpeedDisabled.compareAndSet(false, true)
+        val text = if (fallback) {
+            "$message; retrying with a standard capture session"
+        } else {
+            message
+        }
+        reportError(text)
+        handleDisconnect(text)
     }
 
     private fun reportError(message: String) {

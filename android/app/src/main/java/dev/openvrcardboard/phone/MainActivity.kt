@@ -85,6 +85,7 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
     private lateinit var videoSurface: VideoSurfaceView
     private lateinit var prefs: SharedPreferences
     private lateinit var cameraPermission: ActivityResultLauncher<String>
+    private lateinit var localNetworkPermission: ActivityResultLauncher<String>
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val frameLock = Any()
@@ -122,6 +123,7 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
     private var cameraBad = false
     private var loadingPreferences = false
     private var pendingWebcamStart: (() -> Unit)? = null
+    private var pendingLocalNetworkStart: (() -> Unit)? = null
 
     private val autoHidePanel = Runnable {
         if (running && !imuBad && !videoBad && !cameraBad) {
@@ -211,6 +213,17 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
                 toast("Camera permission is required for camera mode")
             }
         }
+        localNetworkPermission = registerForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { granted ->
+            val pending = pendingLocalNetworkStart
+            pendingLocalNetworkStart = null
+            if (granted && pending != null) {
+                pending.invoke()
+            } else if (!granted) {
+                showLocalNetworkDenied()
+            }
+        }
         bindViews()
         loadPreferences()
         applyIntentOverrides()
@@ -226,7 +239,10 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
             panel.visibility = if (panel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
         modeGroup.setOnCheckedChangeListener { _, _ ->
-            if (!loadingPreferences) pendingWebcamStart = null
+            if (!loadingPreferences) {
+                pendingWebcamStart = null
+                pendingLocalNetworkStart = null
+            }
             updateModeVisibility()
             if (!loadingPreferences && running) {
                 stopStreaming()
@@ -409,6 +425,52 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
     // ------------------------------------------------------------------
     // Streaming lifecycle
     // ------------------------------------------------------------------
+    private fun hasLocalNetworkPermission(): Boolean {
+        // Android 17 (API 37) blocks LAN sockets unless this runtime
+        // permission is granted. Earlier releases only need INTERNET.
+        return Build.VERSION.SDK_INT < 37 ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_LOCAL_NETWORK,
+            ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun withLocalNetworkPermission(action: () -> Unit) {
+        if (hasLocalNetworkPermission()) {
+            action()
+            return
+        }
+        pendingLocalNetworkStart = action
+        startButton.isEnabled = false
+        panel.visibility = View.VISIBLE
+        if (webcamModeButton.isChecked) {
+            cameraStatus = "Waiting for nearby devices permission…"
+        } else {
+            imuStatus = "Waiting for nearby devices permission…"
+            videoStatus = "Waiting for nearby devices permission…"
+        }
+        updateStatus()
+        localNetworkPermission.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+    }
+
+    private fun showLocalNetworkDenied() {
+        running = false
+        startButton.isEnabled = true
+        stopButton.isEnabled = false
+        panel.visibility = View.VISIBLE
+        if (webcamModeButton.isChecked) {
+            cameraBad = true
+            cameraStatus = "Local network permission denied"
+        } else {
+            imuBad = true
+            videoBad = true
+            imuStatus = "Local network permission denied"
+            videoStatus = "Local network permission denied"
+        }
+        updateStatus()
+        toast("Allow nearby devices so the phone can reach the desktop")
+    }
+
     private fun startStreaming() {
         if (running) return
         val host = hostField.text.toString().trim()
@@ -436,14 +498,16 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
                 mode,
             )
             hideKeyboard()
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                pendingWebcamStart = { startWebcam(host, checkedCameraPort, token) }
-                cameraPermission.launch(Manifest.permission.CAMERA)
-                return
+            withLocalNetworkPermission {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
+                    PackageManager.PERMISSION_GRANTED
+                ) {
+                    pendingWebcamStart = { startWebcam(host, checkedCameraPort, token) }
+                    cameraPermission.launch(Manifest.permission.CAMERA)
+                } else {
+                    startWebcam(host, checkedCameraPort, token)
+                }
             }
-            startWebcam(host, checkedCameraPort, token)
             return
         }
 
@@ -460,7 +524,9 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
             mode,
         )
         hideKeyboard()
-        startHeadset(host, checkedImuPort, checkedVideoPort, checkedSensorHz, token)
+        withLocalNetworkPermission {
+            startHeadset(host, checkedImuPort, checkedVideoPort, checkedSensorHz, token)
+        }
     }
 
     private fun startHeadset(
@@ -541,6 +607,7 @@ class MainActivity : AppCompatActivity(), ImuSender.Listener, VideoClient.Listen
     private fun stopStreaming(showPanel: Boolean = true) {
         running = false
         pendingWebcamStart = null
+        pendingLocalNetworkStart = null
         mainHandler.removeCallbacks(autoHidePanel)
 
         val sender = imuSender

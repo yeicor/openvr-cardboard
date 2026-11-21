@@ -647,8 +647,10 @@ Logs:
   USB tether. Set `phone.token` to authenticate the IMU/clock packets, the
   video WebSocket and the camera WebSocket, and use a trusted network. The
   Android app requests `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`,
-  `CAMERA` and `WAKE_LOCK`; camera permission is requested only when you start
-  Camera mode. It does not request microphone, location or storage permissions.
+  `CAMERA`, `ACCESS_LOCAL_NETWORK` and `WAKE_LOCK`; camera permission is
+  requested only when you start Camera mode, and Android 17+ asks for the
+  **Nearby devices** permission before the first LAN stream. It does not request
+  microphone, location or storage permissions.
 - Webcam frames stay on the machine unless you explicitly capture them or use
   the phone camera source. Phone camera frames are decoded in memory for
   tracking and are not recorded unless you start a recording.
