@@ -123,6 +123,7 @@ class _H264Decoder:
         self._waiting_keyframe = False
         self._last_keyframe_request = 0.0
         self._error = ""
+        self._failed = False
         self.dropped = 0
         self.frames = 0
         self._process: Optional[subprocess.Popen[bytes]] = None
@@ -187,6 +188,10 @@ class _H264Decoder:
     @property
     def error(self) -> str:
         return self._error
+
+    @property
+    def failed(self) -> bool:
+        return self._failed
 
     def feed(self, data: bytes, keyframe: bool) -> None:
         if not data:
@@ -285,6 +290,7 @@ class _H264Decoder:
         if self._error:
             message = f"{message} ({self._error})"
         self._error = message
+        self._failed = True
         if self.on_error is not None:
             try:
                 self.on_error(message)
@@ -635,7 +641,11 @@ class PhoneCameraReceiver:
 
     def _ensure_decoder(self, width: int, height: int) -> Optional[_H264Decoder]:
         with self._decoder_lock:
-            if self._decoder is not None and self._decoder_size == (width, height):
+            if (
+                self._decoder is not None
+                and self._decoder_size == (width, height)
+                and not self._decoder.failed
+            ):
                 return self._decoder
             old = self._decoder
             self._decoder = None
@@ -670,6 +680,10 @@ class PhoneCameraReceiver:
         with self._lock:
             self._last_error = message
         LOGGER.warning("phone camera decoder: %s", message)
+        # This callback runs on a decoder thread, so it must not close the
+        # decoder: close() joins those threads and would wait on itself.
+        # The decoder marks itself failed; the connection thread replaces it
+        # when the next frame arrives.
         self._request_keyframe()
 
     def _request_keyframe(self) -> None:

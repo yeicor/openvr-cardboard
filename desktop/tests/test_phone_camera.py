@@ -39,6 +39,7 @@ class FakeDecoder:
         self.dropped = 0
         self.frames = 0
         self.closed = False
+        self.failed = False
         FakeDecoder.instances.append(self)
 
     def feed(self, data: bytes, keyframe: bool) -> None:
@@ -352,6 +353,54 @@ def test_receiver_replacement_keeps_new_connection_and_decoder(monkeypatch):
                     connection.close()
                 except Exception:
                     pass
+        receiver.stop()
+
+
+def test_receiver_replaces_a_failed_decoder_on_the_next_frame(monkeypatch):
+    FakeDecoder.instances.clear()
+    monkeypatch.setattr(phone_camera, "_H264Decoder", FakeDecoder)
+    config = PhoneConfig(camera_enabled=True, camera_port=0, token="")
+    receiver = PhoneCameraReceiver(config, host="127.0.0.1")
+    connection = None
+    try:
+        receiver.start()
+        from websockets.sync.client import connect
+
+        url = f"ws://127.0.0.1:{receiver.local_port}/camera"
+        connection = connect(url, open_timeout=5.0, close_timeout=2.0, legacy=True)
+        assert json.loads(connection.recv(timeout=2.0))["type"] == "camera_welcome"
+        connection.send(json.dumps({"type": "camera_hello", "width": 1280, "height": 720}))
+        connection.send(pack_camera_frame(1, 1.0, 1280, 720, b"\x00\x00\x01\x65one", True))
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and not FakeDecoder.instances:
+            time.sleep(0.02)
+        assert len(FakeDecoder.instances) == 1
+        first = FakeDecoder.instances[0]
+
+        # A decoder thread reports the failure and must not close the decoder
+        # from inside its own callbacks.
+        first.failed = True
+        first.on_error("ffmpeg stopped producing frames")
+        # Closing here would join the decoder's own threads and deadlock.
+        assert not first.closed
+
+        connection.send(pack_camera_frame(2, 2.0, 1280, 720, b"\x00\x00\x01\x65two", True))
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and len(FakeDecoder.instances) < 2:
+            time.sleep(0.02)
+        assert first.closed
+        assert len(FakeDecoder.instances) == 2
+        second = FakeDecoder.instances[1]
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and not second.feeds:
+            time.sleep(0.02)
+        assert second.feeds == [(b"\x00\x00\x01\x65two", True)]
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
         receiver.stop()
 
 
