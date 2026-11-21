@@ -50,6 +50,9 @@ follows semantic versioning for the desktop package and the release tags.
   piped H.264 stream.
 - Camera mode validates the camera port before saving settings and clears a
   pending permission start when the mode changes.
+- Phone camera decoder shutdown now kills ffmpeg before closing its input
+  pipe, preventing a Windows deadlock when the writer is still blocked in a
+  pipe write.
 - Camera mode reports the selected Camera2 ID in its status line so the lens
   used for a calibration is unambiguous.
 

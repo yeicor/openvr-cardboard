@@ -158,7 +158,9 @@ jobs:
   desktop-windows:
     name: Desktop tests (Windows)
     runs-on: windows-latest
+    timeout-minutes: 20
     env:
+      PYTHONUNBUFFERED: "1"
       QT_QPA_PLATFORM: offscreen
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy

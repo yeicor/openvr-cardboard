@@ -317,23 +317,20 @@ class _H264Decoder:
         self._stop.set()
         process = self._process
         if process is not None:
+            # Kill ffmpeg before touching stdin. A writer thread may be blocked
+            # in a pipe write (notably on Windows when ffmpeg stopped reading),
+            # and closing stdin first can then deadlock with that write. Once
+            # the child is gone the blocked write fails and the pipe can be
+            # closed safely.
             try:
-                if process.stdin is not None:
-                    process.stdin.close()
-            except Exception:
-                pass
-            try:
-                process.terminate()
+                process.kill()
             except Exception:
                 pass
             try:
                 process.wait(timeout=1.0)
             except Exception:
-                try:
-                    process.kill()
-                except Exception:
-                    pass
-            for stream in (process.stdout, process.stderr):
+                pass
+            for stream in (process.stdin, process.stdout, process.stderr):
                 try:
                     if stream is not None:
                         stream.close()
