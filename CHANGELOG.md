@@ -3,6 +3,22 @@
 All notable changes to OpenVR Cardboard are documented here. The project
 follows semantic versioning for the desktop package and the release tags.
 
+## [Unreleased]
+
+### Changed
+
+- Desktop and Android phone cameras now share one resolution/FPS fallback
+  ladder: 1080p120, 720p120, 1080p90, 720p90, 1080p60, 720p60, 1080p30,
+  720p30, then the best mode the backend accepts. A manually configured
+  target is tried first and the ladder resumes at the closest lower mode
+  without raising the resolution or frame rate; if every listed mode fails,
+  the backend's best available mode is kept.
+- The Android phone-camera target is configurable from **Settings → Phone**
+  and sent in `camera_welcome` instead of being fixed at 720p120.
+- The camera ladder and fallback cases live in `protocol/camera_modes.txt`
+  and `protocol/camera_mode_attempts.txt`, shared by the Python and Kotlin
+  tests.
+
 ## [1.2.1] - 2026-11-21
 
 ### Added

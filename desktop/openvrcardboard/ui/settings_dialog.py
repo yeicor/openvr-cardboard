@@ -624,6 +624,13 @@ class SettingsDialog(QDialog):
         self.phone_camera_timeout = self._double(
             cfg.camera_timeout_s, 0.1, 10.0, " s", 2
         )
+        self.phone_camera_width = self._spin(cfg.camera_width, 160, 7680)
+        self.phone_camera_height = self._spin(cfg.camera_height, 120, 4320)
+        self.phone_camera_fps = self._spin(cfg.camera_fps, 1, 240, " fps")
+        self.phone_camera_width.setToolTip(
+            "Preferred phone-camera mode. If the phone cannot open it, the "
+            "shared ladder falls back from the closest supported mode."
+        )
         self.phone_token = QLineEdit(cfg.token)
         self.phone_token.setPlaceholderText("optional pairing token")
         self.phone_token.setEchoMode(QLineEdit.EchoMode.Password)
@@ -667,6 +674,11 @@ class SettingsDialog(QDialog):
         form.addRow(self.phone_camera_enabled)
         form.addRow("Phone camera WebSocket port", self.phone_camera_port)
         form.addRow("Phone camera bitrate (phone → desktop)", self.phone_camera_bitrate)
+        form.addRow(
+            "Phone camera target size",
+            self._pair(self.phone_camera_width, self.phone_camera_height),
+        )
+        form.addRow("Phone camera target rate", self.phone_camera_fps)
         form.addRow("Phone camera fallback timeout", self.phone_camera_timeout)
         form.addRow("Pairing token", self.phone_token)
         form.addRow("", self.phone_token_show)
@@ -892,6 +904,9 @@ class SettingsDialog(QDialog):
         cfg.phone.camera_enabled = self.phone_camera_enabled.isChecked()
         cfg.phone.camera_port = self.phone_camera_port.value()
         cfg.phone.camera_bitrate_mbps = self.phone_camera_bitrate.value()
+        cfg.phone.camera_width = self.phone_camera_width.value()
+        cfg.phone.camera_height = self.phone_camera_height.value()
+        cfg.phone.camera_fps = self.phone_camera_fps.value()
         cfg.phone.camera_timeout_s = self.phone_camera_timeout.value()
         cfg.phone.token = self.phone_token.text().strip()
         cfg.phone.layout = self.phone_layout.currentText()

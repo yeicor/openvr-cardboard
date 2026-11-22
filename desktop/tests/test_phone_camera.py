@@ -175,6 +175,9 @@ def test_receiver_authenticates_and_decodes_camera_frames(monkeypatch):
         camera_enabled=True,
         camera_port=0,
         camera_bitrate_mbps=55.0,
+        camera_width=1280,
+        camera_height=720,
+        camera_fps=120,
         token="shared-token",
     )
     receiver = PhoneCameraReceiver(config, host="127.0.0.1")
@@ -206,7 +209,11 @@ def test_receiver_authenticates_and_decodes_camera_frames(monkeypatch):
         welcome = json.loads(connection.recv(timeout=2.0))
         assert welcome["type"] == "camera_welcome"
         assert welcome["bitrate_mbps"] == pytest.approx(55.0)
-        assert (welcome["prefer_width"], welcome["prefer_height"]) == (1280, 720)
+        assert (
+            welcome["prefer_width"],
+            welcome["prefer_height"],
+            welcome["prefer_fps"],
+        ) == (1280, 720, 120)
 
         # A malformed hello must not tear down the session before the phone
         # retries the handshake.

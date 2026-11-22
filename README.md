@@ -20,11 +20,12 @@ setup for SteamVR and OpenXR:
 - **Cardboard phone HMD** — an Android phone streams IMU orientation at sensor
   rate and displays stereo video from the PC. The desktop fuses phone rotation
   with board position for a 6DoF headset.
-- **Phone camera mode** — the same app can upload its rear camera as 720p120
-  H.264. The desktop uses it as the tracking camera while connected, releases
-  the local webcam, and reopens it automatically after the phone stops. Each
-  phone camera gets its own persisted chessboard profile. USB tethering is
-  recommended for the cleanest link.
+- **Phone camera mode** — the same app can upload its rear camera as 1080p120
+  H.264, falling back through 720p120, 1080p90, 720p90 and down to whatever the
+  camera accepts. The desktop uses it as the tracking camera while connected,
+  releases the local webcam, and reopens it automatically after the phone
+  stops. Each phone camera gets its own persisted chessboard profile. USB
+  tethering is recommended for the cleanest link.
 - **Native SteamVR driver and Monado OpenXR runtime** — the C++17 driver
   creates a virtual HMD, controllers and generic trackers on Linux and Windows.
   On Linux the app also registers a Monado-based OpenXR runtime, so OpenXR
@@ -44,7 +45,7 @@ fit together.
 | --- | --- |
 | OS | Windows 10/11 x64, or Linux x86_64 with X11 |
 | VR runtime | SteamVR for Steam games; Monado is bundled for OpenXR on Linux |
-| Webcam | 720p/30 or 1080p/60; manual or marker-aware automatic exposure |
+| Webcam | 720p/30 up to 1080p120; the shared ladder falls back to the best supported mode |
 | Python (source install) | 3.12 or newer |
 | Gamepads (optional) | Two Xbox-style pads for two-handed controller emulation |
 | Phone (optional) | Android 8.0+, rotation-vector sensor, same Wi-Fi or USB tethering |
@@ -370,8 +371,10 @@ work without markers; body tracking needs the player's full body in view.
 ### Camera placement
 
 - Camera near eye height, 0.8–2 m from the play area, whole area visible.
-- 1920×1080 is the reference tracking mode. The app requests the pixel format
-  before the resolution because many USB webcams only expose 1080p60 in MJPG.
+- 1920×1080 is the reference tracking mode. The capture path starts at
+  1080p120 and walks down the shared 720p120, 1080p90, 720p90, 1080p60,
+  720p60, 1080p30 and 720p30 ladder; it requests the pixel format before the
+  resolution because many USB webcams only expose high rates in MJPG.
 - Manual focus, exposure and white balance are more stable than automatic
   control once the scene is lit.
 - Mirroring is preview-only; tracking always uses the original frame.
@@ -404,16 +407,20 @@ used while the app supplies tracking and controllers.
 ### Phone camera mode
 
 Choose **Camera** in the Android app instead of **Headset**. The phone uploads
-its rear camera to `phone.camera_port` (default `8766`), targeting 1280×720 at
-up to 120 FPS. Only one camera is kept open: the desktop releases the local
-camera while fresh phone frames arrive and reopens it in the background after
-the phone stops, so expect a short gap on fallback. Both directions have
-independent quality settings: `phone.camera_bitrate_mbps` (default 40 Mbps) for
-the phone upload and `phone.bitrate_mbps` (default 40 Mbps) for the headset
-video. USB tethering with internet sharing is the recommended link; raise the
-camera bitrate to 60–80 Mbps on USB. The app reports its device and Camera2 ID
-so **Tools → Calibrate phone camera…** can keep a separate intrinsics profile
-per phone lens.
+its rear camera to `phone.camera_port` (default `8766`), targeting 1920×1080 at
+120 FPS by default. Both cameras use the same fallback ladder:
+1080p120, 720p120, 1080p90, 720p90, 1080p60, 720p60, 1080p30, 720p30, then
+whatever the camera accepts. A manually configured target is tried first and
+the ladder resumes at the closest supported entry. Only one camera is kept
+open: the desktop releases the local camera while fresh phone frames arrive
+and reopens it in the background after the phone stops, so expect a short gap
+on fallback. Both directions have independent quality settings:
+`phone.camera_bitrate_mbps` (default 40 Mbps) for the phone upload and
+`phone.bitrate_mbps` (default 40 Mbps) for the headset video. USB tethering
+with internet sharing is the recommended link; raise the camera bitrate to
+60–80 Mbps on USB. The app reports its device and Camera2 ID so
+**Tools → Calibrate phone camera…** can keep a separate intrinsics profile per
+phone lens.
 
 ## Controllers and input
 

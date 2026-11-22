@@ -186,6 +186,9 @@ def test_settings_round_trips_stream_lens_and_openxr(app):
         dialog.phone_encoder.setCurrentText("x264")
         dialog.phone_bitrate.setValue(65.0)
         dialog.phone_keyframe.setValue(0.5)
+        dialog.phone_camera_width.setValue(1280)
+        dialog.phone_camera_height.setValue(720)
+        dialog.phone_camera_fps.setValue(90)
         dialog.lens_separation.setValue(64.0)
         dialog.lens_eye_distance.setValue(42.0)
         dialog.lens_fov.setValue(88.0)
@@ -206,6 +209,11 @@ def test_settings_round_trips_stream_lens_and_openxr(app):
         assert cfg.phone.encoder == "x264"
         assert cfg.phone.bitrate_mbps == pytest.approx(65.0)
         assert cfg.phone.keyframe_interval_s == pytest.approx(0.5)
+        assert (
+            cfg.phone.camera_width,
+            cfg.phone.camera_height,
+            cfg.phone.camera_fps,
+        ) == (1280, 720, 90)
         assert cfg.phone.lens.lens_separation_mm == pytest.approx(64.0)
         assert cfg.phone.lens.eye_screen_distance_mm == pytest.approx(42.0)
         assert cfg.phone.lens.fov_deg == pytest.approx(88.0)

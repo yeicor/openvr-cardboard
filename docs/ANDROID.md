@@ -12,8 +12,9 @@ camera for the desktop:
 - reports the current display rotation so the desktop can compensate when the
   phone is turned 180° in its holder,
 - in **Camera** mode, uploads the rear camera as H.264 to the desktop's
-  tracking-camera socket (default port `8766`), targeting 1280×720 at up to
-  120 FPS.
+  tracking-camera socket (default port `8766`), starting at 1080p120 and
+  falling back through the shared resolution/FPS ladder to whatever the
+  camera accepts.
 
 It is intentionally small: no analytics, no background service, no Google
 account. The phone must stay on the same network as the desktop while in use;
@@ -176,15 +177,18 @@ cannot keep up.
 Choose **Camera** in the mode selector, confirm the desktop IP, camera port and
 token, then press **Start**. The app requests the camera permission on first
 use, opens the rear camera and connects to
-`ws://<desktop>:<camera-port>/camera?token=…`. It targets 1280×720, picks the
-highest rate up to 120 FPS that both the camera and the H.264 encoder support,
-and uses a Camera2 constrained high-speed session when the device only exposes
-120 FPS there. It prefers a fixed high-speed range such as `[120, 120]` over a
-variable one such as `[30, 120]`; if the HAL still rejects the high-speed
-session, the app retries once with a standard capture session instead of
-reconnecting to the same failing mode. The desktop's `camera_welcome` bitrate
-overrides the local default, so quality can be tuned from the desktop settings
-without editing the phone.
+`ws://<desktop>:<camera-port>/camera?token=…`. The desktop's `camera_welcome`
+sets the preferred target (1920×1080 at 120 FPS by default). The app tries the
+requested target first, then walks the shared ladder: 720p120, 1080p90,
+720p90, 1080p60, 720p60, 1080p30, 720p30, and finally the best mode the camera
+accepts. A manually configured target is never replaced by a higher resolution
+or frame rate. The app uses a Camera2 constrained high-speed session when the
+device only exposes 120 FPS there. It prefers a fixed high-speed range such as
+`[120, 120]` over a variable one such as `[30, 120]`; if the HAL still rejects
+the high-speed session, the app retries the remaining ladder with standard
+capture instead of reconnecting to the same failing mode. The desktop's
+`camera_welcome` bitrate overrides the local default, so quality can be tuned
+from the desktop settings without editing the phone.
 
 The encoder runs in CBR (falling back to VBR if the encoder rejects CBR), keeps
 one keyframe per second and sends Annex-B access units. Only the newest frames
@@ -210,8 +214,8 @@ phone is streaming in Camera mode. Keep the phone near the webcam's position
 and orientation; the configured `camera.position` and `camera.rotation` still
 define where the tracking camera sits in play space.
 
-For 720p120, use USB tethering with **USB tethering internet sharing** enabled
-and enter the tether adapter's desktop address. Raise
+For 1080p120 or 720p120, use USB tethering with **USB tethering internet
+sharing** enabled and enter the tether adapter's desktop address. Raise
 `phone.camera_bitrate_mbps` (desktop **Settings → Phone**) to 60–80 Mbps when
 the wired link allows it; 40 Mbps is the default. The headset stream has its
 own `phone.bitrate_mbps` setting.

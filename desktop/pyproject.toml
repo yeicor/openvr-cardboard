@@ -89,6 +89,7 @@ ignore_missing_imports = true
 # These modules are fully annotated today. Add files here as they reach the
 # same bar; a failing type check then blocks CI instead of accumulating noise.
 files = [
+    "openvrcardboard/camera_modes.py",
     "openvrcardboard/config.py",
     "openvrcardboard/config_validation.py",
     "openvrcardboard/installer.py",

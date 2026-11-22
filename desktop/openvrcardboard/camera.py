@@ -17,6 +17,7 @@ from typing import Optional
 
 import numpy as np
 
+from .camera_modes import CameraMode, camera_mode_attempts
 from .config import CameraConfig
 
 LOGGER = logging.getLogger(__name__)
@@ -228,12 +229,16 @@ class CameraCapture:
         attempts = [requested]
         if self.config.allow_mode_fallback and self.config.verify_mode:
             # A mode the camera driver refuses must not silently leave the
-            # app decoding 720p at 5 FPS. Prefer a lower resolution at the
-            # requested frame rate, then the same resolution at a lower rate:
-            # 1080p60, 720p60, 1080p30, 720p30, ...  A camera whose 1080p60
-            # request negotiates 1080p30 is therefore retried at 1080p30
-            # instead of settling for 720p30.
+            # app decoding 720p at 5 FPS. Retry the shared ladder from the
+            # closest entry to the request, then let the camera negotiate
+            # whatever it accepts as the final attempt.
             attempts.extend(self._fallback_attempts(requested))
+            attempts.extend(
+                [
+                    (str(self.config.fourcc or "").strip(), 0, 0, 0),
+                    ("", 0, 0, 0),
+                ]
+            )
 
         capture = None
         for fourcc, width, height, fps in attempts:
@@ -242,8 +247,13 @@ class CameraCapture:
                 continue
             mode = self._capture_mode(cv2, candidate)
             capture = candidate
-            if not self.config.verify_mode or self._mode_matches(
-                mode, (width, height, fps)
+            # Zero geometry/frame rate marks the terminal "whatever the
+            # camera accepts" attempt; do not keep reopening it.
+            unconstrained = width <= 0 or height <= 0 or fps <= 0
+            if (
+                not self.config.verify_mode
+                or unconstrained
+                or self._mode_matches(mode, (width, height, fps))
             ):
                 break
             LOGGER.warning(
@@ -331,9 +341,12 @@ class CameraCapture:
             value = _fourcc_value(cv2, fourcc)
             if value and hasattr(cv2, "CAP_PROP_FOURCC"):
                 capture.set(cv2.CAP_PROP_FOURCC, float(value))
-            capture.set(cv2.CAP_PROP_FRAME_WIDTH, float(width))
-            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(height))
-            capture.set(cv2.CAP_PROP_FPS, float(fps))
+            if width > 0:
+                capture.set(cv2.CAP_PROP_FRAME_WIDTH, float(width))
+            if height > 0:
+                capture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(height))
+            if fps > 0:
+                capture.set(cv2.CAP_PROP_FPS, float(fps))
             if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
                 capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             if hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
@@ -369,53 +382,20 @@ class CameraCapture:
     def _fallback_attempts(
         requested: tuple[str, int, int, int],
     ) -> list[tuple[str, int, int, int]]:
-        """Return UVC fallback modes in least-surprising order.
+        """Return the shared camera ladder after the requested mode.
 
-        Resolution is capped at the requested size so a 720p request never
-        silently opens 1080p.  Frame rates are capped too: a camera asked for
-        30 FPS is not retried at 60 FPS.
+        The ladder is resolution/FPS based and shared with the Android phone
+        camera.  A manual target keeps its exact request as the first attempt;
+        this method returns the fallback entries that follow it.
         """
         fourcc, width, height, fps = requested
         if width <= 0 or height <= 0:
             return []
-        # Keep the 1080p/720p ladder interleaved by frame rate:
-        # 1080p60, 720p60, 1080p30, 720p30. 640x480 follows the ladder so a
-        # camera is not dropped to 640p before its 1080p30 mode is tried.
-        sizes = [(int(width), int(height))]
-        for candidate in ((1920, 1080), (1280, 720)):
-            if candidate[0] <= width and candidate[1] <= height:
-                if candidate not in sizes:
-                    sizes.append(candidate)
-        fps_order = [int(fps)] if fps > 0 else [60, 30]
-        for rate in (60, 30):
-            if rate < fps_order[0] and rate not in fps_order:
-                fps_order.append(rate)
-        attempts: list[tuple[str, int, int, int]] = []
-        for frame_rate in fps_order:
-            for candidate_width, candidate_height in sizes:
-                attempt = (
-                    str(fourcc or ""),
-                    candidate_width,
-                    candidate_height,
-                    frame_rate,
-                )
-                if attempt != requested and attempt not in attempts:
-                    attempts.append(attempt)
-        for frame_rate in fps_order:
-            attempt = (str(fourcc or ""), 640, 480, frame_rate)
-            if attempt != requested and attempt not in attempts:
-                attempts.append(attempt)
-        # Some UVC cameras expose a mode only with the backend's default
-        # pixel format. Keep two modest fallbacks at the very end, but never
-        # exceed the requested size or frame rate.
-        for attempt in (("", 1280, 720, 30), ("", 640, 480, 30)):
-            if attempt[1] > width or attempt[2] > height:
-                continue
-            if fps > 0 and attempt[3] > fps:
-                continue
-            if attempt not in attempts and attempt != requested:
-                attempts.append(attempt)
-        return attempts
+        modes = camera_mode_attempts(CameraMode(int(width), int(height), int(fps)))
+        return [
+            (str(fourcc or ""), mode.width, mode.height, mode.fps)
+            for mode in modes[1:]
+        ]
 
     @staticmethod
     def _mode_matches(actual: tuple[int, int, float, str], requested: tuple[int, int, int]) -> bool:

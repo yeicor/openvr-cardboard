@@ -10,6 +10,8 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
+from .camera_modes import DEFAULT_CAMERA_MODE
+
 APP_NAME = "openvrcardboard"
 CONFIG_VERSION = 7
 
@@ -135,9 +137,12 @@ class BoardsConfig:
 class CameraConfig:
     source: str = "webcam"  # webcam, synthetic
     index: int = 0
-    width: int = 1920
-    height: int = 1080
-    fps: int = 60
+    # Start at the top of the shared fallback ladder. Cameras that cannot
+    # deliver 1080p120 are retried at 720p120, 1080p90, ... before the
+    # negotiated mode is accepted.
+    width: int = DEFAULT_CAMERA_MODE.width
+    height: int = DEFAULT_CAMERA_MODE.height
+    fps: int = DEFAULT_CAMERA_MODE.fps
     backend: str = "auto"  # auto, v4l2, dshow, msmf, any
     # MJPG is what makes 1080p60 possible on most USB 2/3 webcams. It must be
     # selected *before* the resolution and frame rate; the driver negotiates
@@ -318,6 +323,12 @@ class PhoneConfig:
     camera_enabled: bool = True
     camera_port: int = 8766
     camera_bitrate_mbps: float = 40.0
+    # Preferred phone-camera mode sent in camera_welcome. The phone applies the
+    # same fallback ladder, starting from the closest entry when this target
+    # cannot be opened.
+    camera_width: int = DEFAULT_CAMERA_MODE.width
+    camera_height: int = DEFAULT_CAMERA_MODE.height
+    camera_fps: int = DEFAULT_CAMERA_MODE.fps
     # Fall back to the configured camera when no phone frame arrived for this
     # long (covers Wi-Fi stalls as well as an explicit disconnect).
     camera_timeout_s: float = 0.5

@@ -121,13 +121,22 @@ def test_camera_falls_back_to_1080p30_before_720p30():
     assert third_sets[cv2.CAP_PROP_FPS] == 30.0
 
 
-def test_camera_fallback_order_prefers_1080p30_over_720p30():
+def test_camera_fallback_order_uses_the_shared_ladder():
     attempts = CameraCapture._fallback_attempts(("MJPG", 1920, 1080, 60))
-    assert attempts[:4] == [
+    assert attempts == [
         ("MJPG", 1280, 720, 60),
         ("MJPG", 1920, 1080, 30),
         ("MJPG", 1280, 720, 30),
-        ("MJPG", 640, 480, 60),
+    ]
+
+
+def test_camera_default_fallback_starts_at_1080p120():
+    attempts = CameraCapture._fallback_attempts(("MJPG", 1920, 1080, 120))
+    assert attempts[:4] == [
+        ("MJPG", 1280, 720, 120),
+        ("MJPG", 1920, 1080, 90),
+        ("MJPG", 1280, 720, 90),
+        ("MJPG", 1920, 1080, 60),
     ]
 
 
@@ -138,13 +147,20 @@ def test_camera_fallback_never_upscales_a_lower_request():
 
 
 def test_camera_fallback_defaults_stay_within_the_requested_mode():
-    attempts = CameraCapture._fallback_attempts(("MJPG", 640, 480, 60))
-    assert attempts
-    assert all(width <= 640 and height <= 480 for _, width, height, _ in attempts)
+    assert CameraCapture._fallback_attempts(("MJPG", 640, 480, 60)) == []
+    assert CameraCapture._fallback_attempts(("MJPG", 1920, 1080, 15)) == []
 
-    slow = CameraCapture._fallback_attempts(("MJPG", 1920, 1080, 15))
-    assert slow
-    assert all(fps <= 15 for _, _, _, fps in slow)
+
+def test_camera_accepts_whatever_the_last_resort_negotiates():
+    cv2 = FakeCv2([(640, 480, 15.0, "MJPG")] * 5)
+    config = CameraConfig(width=1920, height=1080, fps=60, fourcc="MJPG")
+    capture = CameraCapture(config)
+    capture._cv2 = cv2
+    assert capture._open()
+    assert len(cv2.created) == 5
+    stats = capture.stats()
+    assert (stats.width, stats.height) == (640, 480)
+    assert stats.mode_ok is False
 
 
 def test_camera_controls_only_apply_when_automatic_is_off():

@@ -64,10 +64,9 @@ class CameraStreamer(
     private companion object {
         const val TAG = "OpenVRCardboard"
         const val MAX_QUEUE = 24
-        const val TARGET_WIDTH = 1280
-        const val TARGET_HEIGHT = 720
         const val DEFAULT_BITRATE_MBPS = 40.0
         const val RECONNECT_MS = 2000L
+        const val MODE_RETRY_MS = 250L
     }
 
     private data class CameraMode(
@@ -77,9 +76,15 @@ class CameraStreamer(
         val highSpeed: Boolean,
     )
 
+    private data class ModeAttempt(
+        val mode: CameraMode,
+        val encoder: EncoderChoice,
+    )
+
     private data class EncoderChoice(
         val name: String,
         val maxFps: Int,
+        val supportsSize: Boolean,
     )
 
     private data class EncodedFrame(
@@ -124,6 +129,9 @@ class CameraStreamer(
     private var selectedWidth = 0
     private var selectedHeight = 0
     private var selectedFps = 0
+    private var requestedMode = CameraModes.DEFAULT_MODE
+    private var modeAttempts: List<ModeAttempt> = emptyList()
+    private var modeAttemptIndex = 0
     private var sensorRotation = 0
     private var horizontalFovDeg = 0.0
     private var bitrateMbps = DEFAULT_BITRATE_MBPS
@@ -144,6 +152,8 @@ class CameraStreamer(
         reconnect = null
         disconnecting.set(false)
         stopPipeline()
+        modeAttempts = emptyList()
+        modeAttemptIndex = 0
         val socket = webSocket
         webSocket = null
         try {
@@ -215,7 +225,28 @@ class CameraStreamer(
                                 DEFAULT_BITRATE_MBPS,
                             )
                         }
-                        startPipelineIfNeeded()
+                        val width = payload.optInt("prefer_width", 0)
+                        val height = payload.optInt("prefer_height", 0)
+                        val fps = payload.optInt("prefer_fps", 0)
+                        val modeChanged = width in 16..7680 &&
+                            height in 16..4320 &&
+                            fps in 1..240 &&
+                            CameraModeRequest(width, height, fps) != requestedMode
+                        if (modeChanged) {
+                            requestedMode = CameraModeRequest(width, height, fps)
+                        }
+                        mainHandler.post {
+                            if (modeChanged && pipelineStarted.get()) {
+                                // The desktop's target arrived after the
+                                // fallback timer had already started the
+                                // pipeline. Rebuild the ladder from it.
+                                modeAttempts = emptyList()
+                                modeAttemptIndex = 0
+                                restartPipeline()
+                            } else {
+                                startPipelineIfNeeded()
+                            }
+                        }
                     }
                     "camera_request_keyframe" -> requestKeyframe()
                     "error" -> {
@@ -250,6 +281,8 @@ class CameraStreamer(
         mainHandler.removeCallbacksAndMessages(null)
         reconnect = null
         stopPipeline()
+        modeAttempts = emptyList()
+        modeAttemptIndex = 0
         val socket = webSocket
         webSocket = null
         try {
@@ -286,9 +319,11 @@ class CameraStreamer(
         try {
             openCamera()
         } catch (exc: Exception) {
-            pipelineStarted.set(false)
-            reportError("camera setup failed: ${exc.message ?: exc}")
-            handleDisconnect("camera setup failed")
+            val message = "camera setup failed: ${exc.message ?: exc}"
+            if (!retryNextMode(message)) {
+                pipelineStarted.set(false)
+                handleDisconnect(message)
+            }
         }
     }
 
@@ -314,13 +349,16 @@ class CameraStreamer(
         horizontalFovDeg = horizontalFov(characteristics)
         val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?: throw IllegalStateException("camera has no stream configuration")
-        val encoderChoice = chooseEncoder(TARGET_WIDTH, TARGET_HEIGHT)
-        val mode = chooseMode(
-            characteristics,
-            map,
-            encoderChoice.maxFps,
-            allowHighSpeed = !highSpeedDisabled.get(),
-        )
+        if (modeAttempts.isEmpty()) {
+            modeAttempts = buildModeAttempts(characteristics, map)
+            modeAttemptIndex = 0
+        }
+        if (modeAttemptIndex !in modeAttempts.indices) {
+            modeAttemptIndex = 0
+        }
+        val attempt = modeAttempts[modeAttemptIndex]
+        val mode = attempt.mode
+        val encoderChoice = attempt.encoder
         selectedWidth = mode.size.width
         selectedHeight = mode.size.height
         selectedFps = mode.fps
@@ -431,8 +469,13 @@ class CameraStreamer(
         }
     }
 
-    private fun chooseEncoder(width: Int, height: Int): EncoderChoice {
+    private fun chooseEncoder(
+        width: Int,
+        height: Int,
+        desiredFps: Int = 60,
+    ): EncoderChoice {
         var fallback: EncoderChoice? = null
+        var best: EncoderChoice? = null
         try {
             val codecs = MediaCodecList(MediaCodecList.REGULAR_CODECS)
             for (info in codecs.codecInfos) {
@@ -460,15 +503,18 @@ class CameraStreamer(
                 } catch (_: Exception) {
                     continue
                 }.coerceIn(1, 240)
-                val choice = EncoderChoice(info.name, maxFps)
+                val choice = EncoderChoice(info.name, maxFps, supportsSize = true)
                 if (fallback == null) fallback = choice
-                // Prefer the first encoder the platform ranks highly that can
-                // actually sustain a usable frame rate at this size.
-                if (maxFps >= 60) return choice
+                // Prefer the first platform-ranked encoder that can sustain
+                // the target rate, then the fastest remaining one. Platform
+                // order keeps hardware codecs ahead of software when their
+                // limits are equal.
+                if (maxFps >= desiredFps) return choice
+                if (best == null || maxFps > best.maxFps) best = choice
             }
         } catch (_: Exception) {
         }
-        return fallback ?: EncoderChoice("", 120)
+        return best ?: fallback ?: EncoderChoice("", 120, supportsSize = false)
     }
 
     private fun createEncoder(
@@ -537,15 +583,181 @@ class CameraStreamer(
         throw lastError ?: IllegalStateException("no H.264 encoder is available")
     }
 
+    private fun buildModeAttempts(
+        characteristics: CameraCharacteristics,
+        map: StreamConfigurationMap,
+    ): List<ModeAttempt> {
+        val allowHighSpeed = !highSpeedDisabled.get()
+        val attempts = mutableListOf<ModeAttempt>()
+        for (request in CameraModes.attempts(requestedMode)) {
+            val encoder = chooseEncoder(request.width, request.height, request.fps)
+            if (!encoder.supportsSize) continue
+            val mode = resolveMode(
+                characteristics,
+                map,
+                request,
+                encoder.maxFps,
+                allowHighSpeed,
+            ) ?: continue
+            if (attempts.none { sameMode(it.mode, mode) }) {
+                attempts.add(ModeAttempt(mode, encoder))
+            }
+        }
+        // Terminal "whatever the camera accepts": the best available mode at
+        // or below the requested target, even if it is not on the ladder.
+        val terminal = terminalAttempt(characteristics, map, allowHighSpeed)
+        if (attempts.none { sameMode(it.mode, terminal.mode) }) {
+            attempts.add(terminal)
+        }
+        return attempts
+    }
+
+    private fun sameMode(left: CameraMode, right: CameraMode): Boolean =
+        left.size == right.size &&
+            left.fps == right.fps &&
+            left.highSpeed == right.highSpeed
+
+    private fun resolveMode(
+        characteristics: CameraCharacteristics,
+        map: StreamConfigurationMap,
+        request: CameraModeRequest,
+        encoderMaxFps: Int,
+        allowHighSpeed: Boolean,
+    ): CameraMode? {
+        val size = Size(request.width, request.height)
+        val targetFps = request.fps.coerceAtLeast(1)
+        // Match the desktop's tolerance: a mode within 20% of the requested
+        // rate still satisfies that ladder entry.
+        val minFps = maxOf(1, (targetFps * 0.8).toInt())
+        val encoderFps = encoderMaxFps.coerceAtLeast(1)
+
+        val standardSizes = map.getOutputSizes(SurfaceTexture::class.java)
+            ?.toList()
+            .orEmpty()
+        if (size in standardSizes) {
+            val duration = map.getOutputMinFrameDuration(
+                SurfaceTexture::class.java,
+                size,
+            )
+            val cameraMax = if (duration > 0L) {
+                (1_000_000_000L / duration).toInt().coerceIn(1, 240)
+            } else {
+                30
+            }
+            val limit = minOf(cameraMax, encoderFps, targetFps)
+            if (limit >= minFps) {
+                val ranges = characteristics
+                    .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                    ?.toList()
+                    .orEmpty()
+                val range = chooseRangeAtOrBelow(ranges, limit)
+                val actual = minOf(limit, range?.upper ?: limit)
+                if (actual >= minFps) {
+                    return CameraMode(size, actual, range, highSpeed = false)
+                }
+            }
+        }
+
+        if (allowHighSpeed) {
+            val highSizes = map.highSpeedVideoSizes?.toList().orEmpty()
+            if (size in highSizes) {
+                val highLimit = minOf(encoderFps, targetFps)
+                val ranges = map.getHighSpeedVideoFpsRangesFor(size)
+                    ?.toList()
+                    .orEmpty()
+                // Prefer a fixed range such as [120, 120] over a variable one
+                // such as [30, 120]. Some Camera2 HALs advertise the variable
+                // range but reject it with ERROR_CAMERA_DEVICE.
+                val usable = ranges.filter {
+                    it.upper <= highLimit && it.upper >= minFps
+                }
+                val range = usable
+                    .filter { it.lower == it.upper }
+                    .maxByOrNull { it.upper }
+                    ?: usable.maxByOrNull { it.upper }
+                if (range != null) {
+                    return CameraMode(size, range.upper, range, highSpeed = true)
+                }
+            }
+        }
+        return null
+    }
+
+    private fun terminalAttempt(
+        characteristics: CameraCharacteristics,
+        map: StreamConfigurationMap,
+        allowHighSpeed: Boolean,
+    ): ModeAttempt {
+        val standardSizes = map.getOutputSizes(SurfaceTexture::class.java)
+            ?.toList()
+            .orEmpty()
+        val candidates = buildList {
+            pickSize(
+                standardSizes,
+                requestedMode.width,
+                requestedMode.height,
+            )
+                ?.takeIf {
+                    it.width <= requestedMode.width &&
+                        it.height <= requestedMode.height
+                }
+                ?.let { add(it) }
+            standardSizes
+                .filter {
+                    it.width <= requestedMode.width &&
+                        it.height <= requestedMode.height &&
+                        it.width >= 640 &&
+                        it.height >= 360
+                }
+                .sortedByDescending { it.width * it.height }
+                .forEach { add(it) }
+        }.distinct()
+        for (size in candidates) {
+            val encoderAtSize = chooseEncoder(size.width, size.height, requestedMode.fps)
+            if (!encoderAtSize.supportsSize) continue
+            val mode = chooseMode(
+                characteristics,
+                map,
+                size.width,
+                size.height,
+                minOf(encoderAtSize.maxFps, requestedMode.fps),
+                allowHighSpeed,
+            )
+            val encoder = chooseEncoder(
+                mode.size.width,
+                mode.size.height,
+                requestedMode.fps,
+            )
+            if (!encoder.supportsSize || mode.fps > encoder.maxFps) continue
+            return ModeAttempt(mode, encoder)
+        }
+        // No encoder advertised any candidate size. Keep one best effort
+        // attempt so MediaCodec can report a precise error.
+        val size = candidates.firstOrNull()
+            ?: Size(requestedMode.width, requestedMode.height)
+        val encoder = chooseEncoder(size.width, size.height, requestedMode.fps)
+        val mode = chooseMode(
+            characteristics,
+            map,
+            size.width,
+            size.height,
+            minOf(encoder.maxFps, requestedMode.fps),
+            allowHighSpeed,
+        )
+        return ModeAttempt(mode, encoder)
+    }
+
     private fun chooseMode(
         characteristics: CameraCharacteristics,
         map: StreamConfigurationMap,
+        targetWidth: Int,
+        targetHeight: Int,
         encoderMaxFps: Int,
         allowHighSpeed: Boolean,
     ): CameraMode {
         val standardSizes = map.getOutputSizes(SurfaceTexture::class.java)?.toList()
             .orEmpty()
-        val standardSize = pickSize(standardSizes)
+        val standardSize = pickSize(standardSizes, targetWidth, targetHeight)
         val standardDuration = if (standardSize != null) {
             map.getOutputMinFrameDuration(SurfaceTexture::class.java, standardSize)
         } else {
@@ -567,7 +779,7 @@ class CameraStreamer(
             standardRange?.upper ?: standardMax,
         ).coerceAtLeast(1)
         var best = CameraMode(
-            standardSize ?: Size(TARGET_WIDTH, TARGET_HEIGHT),
+            standardSize ?: Size(targetWidth, targetHeight),
             standardFps,
             standardRange,
             false,
@@ -575,17 +787,18 @@ class CameraStreamer(
 
         val highSizes = map.highSpeedVideoSizes?.toList().orEmpty()
         val highSize = highSizes.firstOrNull {
-            it.width == TARGET_WIDTH && it.height == TARGET_HEIGHT
-        } ?: pickSize(highSizes)
-        if (allowHighSpeed && highSize != null) {
+            it.width == targetWidth && it.height == targetHeight
+        } ?: pickSize(highSizes, targetWidth, targetHeight)
+        if (allowHighSpeed &&
+            highSize != null &&
+            highSize.width <= targetWidth &&
+            highSize.height <= targetHeight
+        ) {
             val highRanges = map.getHighSpeedVideoFpsRangesFor(highSize)?.toList()
                 .orEmpty()
-            // Prefer a fixed range such as [120, 120] over a variable one
-            // such as [30, 120]. Some camera HALs reject the variable range
-            // in a constrained high-speed session with ERROR_CAMERA_DEVICE
-            // even though it is advertised. Some devices only publish
-            // [120, 240]; running that at 240 would double the bitrate and
-            // defeat the 720p120 target, so stay standard there.
+            // Some devices only publish [120, 240]; running that at 240 would
+            // double the bitrate and defeat a 120 FPS target, so stay
+            // standard there.
             val usableHigh = highRanges.filter {
                 it.upper <= minOf(120, encoderMaxFps) && it.upper >= 60
             }
@@ -600,18 +813,35 @@ class CameraStreamer(
         return best
     }
 
-    private fun pickSize(sizes: List<Size>): Size? {
+    private fun pickSize(
+        sizes: List<Size>,
+        targetWidth: Int,
+        targetHeight: Int,
+    ): Size? {
         if (sizes.isEmpty()) return null
-        sizes.firstOrNull { it.width == TARGET_WIDTH && it.height == TARGET_HEIGHT }
+        sizes.firstOrNull { it.width == targetWidth && it.height == targetHeight }
             ?.let { return it }
         val under = sizes.filter {
-            it.width <= TARGET_WIDTH && it.height <= TARGET_HEIGHT &&
+            it.width <= targetWidth && it.height <= targetHeight &&
                 it.width >= 640 && it.height >= 360
         }
         if (under.isNotEmpty()) {
             return under.maxByOrNull { it.width * it.height }
         }
-        return sizes.minByOrNull { abs(it.width - TARGET_WIDTH) + abs(it.height - TARGET_HEIGHT) }
+        return sizes.minByOrNull {
+            abs(it.width - targetWidth) + abs(it.height - targetHeight)
+        }
+    }
+
+    private fun chooseRangeAtOrBelow(
+        ranges: List<Range<Int>>,
+        maxFps: Int,
+    ): Range<Int>? {
+        return ranges
+            .filter { it.upper <= maxFps && it.upper >= 1 }
+            .maxWithOrNull(
+                compareBy<Range<Int>> { it.upper }.thenBy { it.upper - it.lower },
+            )
     }
 
     private fun chooseStandardRange(
@@ -972,14 +1202,51 @@ class CameraStreamer(
     }
 
     private fun failPipeline(mode: CameraMode, message: String) {
-        val fallback = mode.highSpeed && highSpeedDisabled.compareAndSet(false, true)
-        val text = if (fallback) {
-            "$message; retrying with a standard capture session"
+        val text = if (mode.highSpeed) {
+            "$message; trying the next camera mode"
         } else {
             message
         }
-        reportError(text)
-        handleDisconnect(text)
+        if (!retryNextMode(text)) {
+            pipelineStarted.set(false)
+            handleDisconnect(text)
+        }
+    }
+
+    /**
+     * Advance to the next resolved camera mode without reconnecting the
+     * WebSocket. If every high-speed candidate failed, rebuild the ladder
+     * without constrained high-speed sessions and try once more.
+     */
+    private fun retryNextMode(message: String): Boolean {
+        reportError(message)
+        if (modeAttempts.isNotEmpty() && modeAttemptIndex + 1 < modeAttempts.size) {
+            modeAttemptIndex += 1
+            val next = modeAttempts[modeAttemptIndex].mode
+            Log.i(
+                TAG,
+                "camera fallback: ${next.size.width}×${next.size.height} @ " +
+                    "${next.fps} fps (highSpeed=${next.highSpeed})",
+            )
+            restartPipeline()
+            return true
+        }
+        if (!highSpeedDisabled.get() && modeAttempts.any { it.mode.highSpeed }) {
+            highSpeedDisabled.set(true)
+            modeAttempts = emptyList()
+            modeAttemptIndex = 0
+            Log.i(TAG, "camera fallback: retrying without high-speed capture")
+            restartPipeline()
+            return true
+        }
+        return false
+    }
+
+    private fun restartPipeline() {
+        stopPipeline()
+        mainHandler.postDelayed({
+            if (running.get() && !pipelineStarted.get()) startPipelineIfNeeded()
+        }, MODE_RETRY_MS)
     }
 
     private fun reportError(message: String) {

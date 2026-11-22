@@ -312,10 +312,12 @@ orientation errors.
 - Put the camera near eye height, 0.8–2 m from the play area, with the whole
   area in view. The default pose is `(0, 1.5, −1.5)` looking at the origin.
 - Avoid strong backlighting and direct sunlight on boards.
-- Use 1920×1080 as the reference tracking mode. The app requests the pixel
-  format before the resolution because many USB webcams only expose 1080p60 in
-  MJPG. If the camera cannot deliver it, `camera.allow_mode_fallback` accepts
-  the highest mode it reports and the status panel shows the negotiated size.
+- Use 1920×1080 as the reference tracking mode. The capture path starts at
+  1080p120 and walks down the shared 720p120, 1080p90, 720p90, 1080p60,
+  720p60, 1080p30 and 720p30 ladder; it requests the pixel format before the
+  resolution because many USB webcams only expose high rates in MJPG. If none
+  of those modes is accepted, `camera.allow_mode_fallback` keeps whatever
+  mode the camera negotiates and the status panel shows the actual size.
 - On Linux, `MJPG` avoids many USB bandwidth limits. Set `camera.fourcc` to
   `MJPG`; use `camera.backend = "v4l2"` if auto-detection picks the wrong API.
 - Set `camera.autofocus`, `auto_exposure`, `gain` and `auto_white_balance` in
@@ -475,11 +477,16 @@ the desktop reopens its local camera in the background. There can be a short
 tracking gap while that device opens; no desktop restart or extra pairing step
 is needed.
 
-The phone targets 1280×720 at up to 120 FPS, using Camera2 constrained
-high-speed capture when the device exposes it, and retries with a standard
-capture session if the HAL rejects the high-speed mode. On Android 17+ allow
-the **Nearby devices** prompt on first start, otherwise LAN access is blocked.
-Quality is the priority:
+The phone starts at 1920×1080 at 120 FPS and uses the same ladder as the
+webcam: 720p120, 1080p90, 720p90, 1080p60, 720p60, 1080p30, 720p30 and then
+whatever the camera accepts. A target configured in **Settings → Phone**
+(`phone.camera_width`, `phone.camera_height` and `phone.camera_fps`) is tried
+first and the ladder resumes at the closest supported entry without ever
+raising the resolution or frame rate above that target. The app uses Camera2
+constrained high-speed capture when the device exposes it, and retries the
+remaining ladder with a standard capture session if the HAL rejects the
+high-speed mode. On Android 17+ allow the **Nearby devices** prompt on first
+start, otherwise LAN access is blocked. Quality is the priority:
 `phone.camera_bitrate_mbps` (default 40 Mbps) controls the phone upload, and
 `phone.bitrate_mbps` (default 40 Mbps) controls the desktop-to-phone headset
 stream. Raise either on USB tethering or a clean 5 GHz link. The phone reports
@@ -491,7 +498,8 @@ The desktop decodes the upload with ffmpeg (ffmpeg 5.1 or newer); the `[all]`
 install and the portable packages include it, and camera mode falls back to the
 local webcam if ffmpeg is missing.
 
-USB tethering is the recommended link for camera mode and for 720p120. Connect
+USB tethering is the recommended link for camera mode and for 1080p120 or
+720p120. Connect
 the phone by USB, enable **USB tethering** and **USB tethering internet
 sharing** on the phone, and use the tether interface's desktop address in the
 app. It avoids Wi-Fi jitter and has ample bandwidth for the 40–80 Mbps camera
@@ -513,7 +521,7 @@ older single-marker or body-marker settings.
 | `driver` | `udp_host 127.0.0.1`, `udp_port 39100`, `state_rate_hz 250` | Keep loopback unless you understand the risk |
 | | `enable_virtual_hmd true`, `controller_profile vive_controller` | Profiles: `vive_controller`, `knuckles`, `oculus_touch` |
 | | `tracker_count 6`, `pose_timeout_ms 1000` | Generic trackers and tracking-loss timeout |
-| `camera` | `index 0`, `1920×1080`, `60 fps`, `fourcc MJPG` | Capture and marker settings |
+| `camera` | `index 0`, `1920×1080`, `120 fps`, `fourcc MJPG` | Capture and marker settings; the shared ladder starts here |
 | | `allow_mode_fallback true`, `verify_mode true` | Accept the camera's best supported mode |
 | | `autofocus true`, `auto_exposure true`, `auto_white_balance true` | Manual control when disabled |
 | | `auto_marker_control true`, `camera_aggressiveness 0.5`, `camera_target_brightness 0.52`, `camera_max_gain 64` | Marker-aware exposure/gain loop; disable for fully manual control |
@@ -550,6 +558,7 @@ older single-marker or body-marker settings.
 | | `manual_hmd_position [0,1.65,0]`, `controller_offset_*` | Fallback poses |
 | `phone` | `imu_port 39101`, `video_port 8765`, `token ""` | Phone link |
 | | `camera_enabled true`, `camera_port 8766`, `camera_bitrate_mbps 40`, `camera_timeout_s 0.5` | Phone-as-webcam receiver, upload budget and local-camera fallback |
+| | `camera_width 1920`, `camera_height 1080`, `camera_fps 120` | Preferred phone-camera target sent in `camera_welcome`; the phone falls back down the shared ladder |
 | | `layout sbs`, `width 1200`, `height 1080` | Per-eye size; 2400×1080 side-by-side |
 | | `fps 90`, `codec auto`, `encoder auto`, `bitrate_mbps 40`, `keyframe_interval_s 1.0` | Video budget and NVENC/CPU encoder choice |
 | | `jpeg_quality 65` | JPEG fallback and non-GPU machines |

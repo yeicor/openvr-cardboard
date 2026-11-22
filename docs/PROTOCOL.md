@@ -374,8 +374,14 @@ authenticated connection replaces the old one.
 `camera_welcome` (desktop → phone):
 
 ```json
-{"type":"camera_welcome","protocol":1,"session":"a4f2","codec":"h264","bitrate_mbps":40.0,"prefer_width":1280,"prefer_height":720,"prefer_fps":120}
+{"type":"camera_welcome","protocol":1,"session":"a4f2","codec":"h264","bitrate_mbps":40.0,"prefer_width":1920,"prefer_height":1080,"prefer_fps":120}
 ```
+
+`prefer_width`, `prefer_height` and `prefer_fps` are the configurable
+`phone.camera_*` target. The phone tries that exact mode first and then the
+shared ladder (720p120, 1080p90, 720p90, 1080p60, 720p60, 1080p30, 720p30),
+without exceeding the requested resolution or frame rate. If none of those
+modes can be opened it keeps the best available mode.
 
 `camera_hello` (phone → desktop):
 

@@ -353,6 +353,11 @@ class PhoneCameraReceiver:
         self._requested_height = 0
         self._requested_fps = 0
         self._bitrate_mbps = float(getattr(config, "camera_bitrate_mbps", 40.0))
+        # Preferred phone-camera mode sent before the phone opens Camera2. The
+        # phone runs the shared fallback ladder from this target.
+        self._prefer_width = int(getattr(config, "camera_width", 1920) or 1920)
+        self._prefer_height = int(getattr(config, "camera_height", 1080) or 1080)
+        self._prefer_fps = int(getattr(config, "camera_fps", 120) or 120)
 
         self._running = False
         self._stop = threading.Event()
@@ -572,9 +577,9 @@ class PhoneCameraReceiver:
                 "session": self._session,
                 "codec": "h264",
                 "bitrate_mbps": self._bitrate_mbps,
-                "prefer_width": 1280,
-                "prefer_height": 720,
-                "prefer_fps": 120,
+                "prefer_width": self._prefer_width,
+                "prefer_height": self._prefer_height,
+                "prefer_fps": self._prefer_fps,
             },
             connection,
         )

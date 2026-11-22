@@ -1,0 +1,10 @@
+# Shared camera fallback ladder used by the desktop and Android capture paths.
+# Lines beginning with '#' are comments. Each data line is: width height fps
+1920 1080 120
+1280 720 120
+1920 1080 90
+1280 720 90
+1920 1080 60
+1280 720 60
+1920 1080 30
+1280 720 30

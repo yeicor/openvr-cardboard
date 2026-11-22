@@ -355,6 +355,9 @@ def validate_config(config: AppConfig) -> list[str]:
     cfg.phone.camera_bitrate_mbps = _clamp(
         cfg.phone.camera_bitrate_mbps, 1.0, 200.0, float
     )
+    cfg.phone.camera_width = int(_clamp(cfg.phone.camera_width, 160, 7680, int))
+    cfg.phone.camera_height = int(_clamp(cfg.phone.camera_height, 120, 4320, int))
+    cfg.phone.camera_fps = int(_clamp(cfg.phone.camera_fps, 1, 240, int))
     cfg.phone.camera_timeout_s = _clamp(cfg.phone.camera_timeout_s, 0.1, 10.0, float)
     if cfg.phone.camera_enabled and cfg.phone.camera_port in (
         cfg.phone.imu_port,
