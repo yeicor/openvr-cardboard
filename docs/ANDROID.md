@@ -41,7 +41,7 @@ USB tethering with internet sharing is the recommended link.
 The project uses Android Gradle Plugin 9.5.1, Gradle 9.9.1 and AGP 9's built-in
 Kotlin support, so there is no separate `org.jetbrains.kotlin.android` plugin to
 install or version. `compileSdk`/`targetSdk` are 37, `minSdk` is 26, and the app
-version is `1.2.1` (`versionCode 5`).
+version is `1.2.2` (`versionCode 6`).
 
 ## Build
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openvrcardboard"
-version = "1.2.1"
+version = "1.2.2"
 description = "Webcam tracking, gamepad VR controllers and phone HMD streaming for SteamVR"
 readme = { text = "Webcam tracking, gamepad controllers and phone HMD streaming for OpenVR. See the repository README for setup.", content-type = "text/markdown" }
 requires-python = ">=3.12"

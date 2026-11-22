@@ -5,10 +5,10 @@
 ; runs the bundled openvrcardboard-install.exe to register the SteamVR driver,
 ; and unregisters it again on uninstall.
 ;
-; ISCC /DAppVersion=1.2.3 /DSourceDir=C:\path\to\dist\openvrcardboard build.iss
+; ISCC /DAppVersion=1.2.2 /DSourceDir=C:\path\to\dist\openvrcardboard build.iss
 
 #ifndef AppVersion
-  #define AppVersion "1.2.1"
+  #define AppVersion "1.2.2"
 #endif
 
 #ifndef SourceDir
